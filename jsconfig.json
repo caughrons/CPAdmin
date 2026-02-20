@@ -11,6 +11,7 @@
       "@/pages/*": ["pages/*"],
       "@/redux/*": ["redux/*"],
       "@/theme/*": ["theme/*"],
+      "@/services/*": ["services/*"],
       "@/utils/*": ["utils/*"],
       "@/vendor/*": ["vendor/*"],
 

@@ -15,6 +15,7 @@ import { spacing } from "@mui/system";
 import GlobalStyle from "@/components/GlobalStyle";
 import Navbar from "@/components/navbar/Navbar";
 import dashboardItems from "@/components/sidebar/navItems";
+
 import Sidebar from "@/components/sidebar/Sidebar";
 import Footer from "@/components/Footer";
 import Settings from "@/components/Settings";

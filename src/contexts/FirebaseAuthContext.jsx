@@ -1,4 +1,4 @@
-import React, { createContext, useEffect, useReducer, useState } from "react";
+import React, { createContext, useEffect, useReducer } from "react";
 
 import firebase from "firebase/app";
 import "firebase/auth";
@@ -16,16 +16,18 @@ if (!firebase.apps.length) {
 const initialState = {
   isAuthenticated: false,
   isInitialized: false,
+  isAdmin: false,
   user: null,
 };
 
 const reducer = (state, action) => {
   if (action.type === INITIALIZE) {
-    const { isAuthenticated, user } = action.payload;
+    const { isAuthenticated, isAdmin, user } = action.payload;
     return {
       ...state,
       isAuthenticated,
       isInitialized: true,
+      isAdmin,
       user,
     };
   }
@@ -36,72 +38,30 @@ const reducer = (state, action) => {
 const AuthContext = createContext(null);
 
 function AuthProvider({ children }) {
-  const [profile, setProfile] = useState();
   const [state, dispatch] = useReducer(reducer, initialState);
 
-  useEffect(
-    () =>
-      firebase.auth().onAuthStateChanged((user) => {
-        if (user) {
-          const docRef = firebase.firestore().collection("users").doc(user.uid);
-          docRef
-            .get()
-            .then((doc) => {
-              if (doc.exists) {
-                setProfile(doc.data());
-              }
-            })
-            .catch((error) => {
-              console.error(error);
-            });
-
+  useEffect(() => {
+    const unsubscribe = firebase.auth().onAuthStateChanged((user) => {
+      if (user) {
+        user.getIdTokenResult().then((tokenResult) => {
+          const isAdmin = tokenResult.claims.admin === true;
           dispatch({
             type: INITIALIZE,
-            payload: { isAuthenticated: true, user },
+            payload: { isAuthenticated: true, isAdmin, user },
           });
-        } else {
-          dispatch({
-            type: INITIALIZE,
-            payload: { isAuthenticated: false, user: null },
-          });
-        }
-      }),
-    [dispatch]
-  );
+        });
+      } else {
+        dispatch({
+          type: INITIALIZE,
+          payload: { isAuthenticated: false, isAdmin: false, user: null },
+        });
+      }
+    });
+    return unsubscribe;
+  }, [dispatch]);
 
   const signIn = (email, password) =>
     firebase.auth().signInWithEmailAndPassword(email, password);
-
-  const signInWithGoogle = () => {
-    const provider = new firebase.auth.GoogleAuthProvider();
-    return firebase.auth().signInWithPopup(provider);
-  };
-
-  const signInWithFaceBook = () => {
-    const provider = new firebase.auth.FacebookAuthProvider();
-    return firebase.auth().signInWithPopup(provider);
-  };
-
-  const signInWithTwitter = () => {
-    const provider = new firebase.auth.TwitterAuthProvider();
-    return firebase.auth().signInWithPopup(provider);
-  };
-
-  const signUp = (email, password, firstName, lastName) =>
-    firebase
-      .auth()
-      .createUserWithEmailAndPassword(email, password)
-      .then((res) => {
-        firebase
-          .firestore()
-          .collection("users")
-          .doc(res.user?.uid)
-          .set({
-            uid: res.user?.uid,
-            email,
-            displayName: `${firstName} ${lastName}`,
-          });
-      });
 
   const signOut = async () => {
     await firebase.auth().signOut();
@@ -121,15 +81,10 @@ function AuthProvider({ children }) {
         user: {
           id: auth.uid,
           email: auth.email,
-          avatar: auth.avatar || profile?.avatar,
-          displayName: auth.displayName || profile?.displayName,
-          role: "user",
+          displayName: auth.displayName,
+          role: state.isAdmin ? "admin" : "user",
         },
         signIn,
-        signUp,
-        signInWithGoogle,
-        signInWithFaceBook,
-        signInWithTwitter,
         signOut,
         resetPassword,
       }}

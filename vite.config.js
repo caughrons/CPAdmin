@@ -15,7 +15,7 @@ export default defineConfig({
     nodePolyfills({
       protocolImports: true,
     }),
-    tsconfigPaths(),
+    tsconfigPaths({ configNames: ["jsconfig.json"] }),
   ],
   build: {
     chunkSizeWarningLimit: 6000,

@@ -2,13 +2,15 @@ import React, { useEffect, useRef, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import {
   Box,
+  Button,
   CircularProgress,
   Divider,
   Grid,
   Paper,
+  Tooltip,
   Typography,
 } from "@mui/material";
-import { Radio, Satellite, GitMerge, Layers, Clock } from "lucide-react";
+import { Radio, Satellite, GitMerge, Layers, Clock, Play, Square } from "lucide-react";
 import {
   ComposableMap,
   Geographies,
@@ -16,6 +18,14 @@ import {
   Marker,
 } from "react-simple-maps";
 import { fetchAisStats } from "@/services/aisStats";
+import firebase from "firebase/app";
+import "firebase/database";
+import { firebaseConfig } from "@/config";
+
+if (!firebase.apps.length) {
+  firebase.initializeApp(firebaseConfig);
+}
+const rtdb = firebase.database();
 
 const GEO_URL = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
 
@@ -150,6 +160,8 @@ function AIS() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState(null);
+  const [feedEnabled, setFeedEnabled] = useState(null); // null = loading
+  const [feedToggling, setFeedToggling] = useState(false);
   const intervalRef = useRef(null);
 
   const load = async () => {
@@ -161,6 +173,38 @@ function AIS() {
       console.error("[AIS page]", e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Live listener on ais_config/enabled
+  useEffect(() => {
+    const ref = rtdb.ref("ais_config/enabled");
+    const handler = (snap) => {
+      setFeedEnabled(snap.exists() ? snap.val() === true : false);
+    };
+    ref.on("value", handler, () => {
+      // Permission denied or other error — default to off so button is usable
+      setFeedEnabled(false);
+    });
+    // Fallback: if listener hasn't fired after 3s, default to off
+    const timeout = setTimeout(() => {
+      setFeedEnabled((prev) => (prev === null ? false : prev));
+    }, 3000);
+    return () => {
+      ref.off("value", handler);
+      clearTimeout(timeout);
+    };
+  }, []);
+
+  const toggleFeed = async () => {
+    if (feedToggling || feedEnabled === null) return;
+    setFeedToggling(true);
+    try {
+      await rtdb.ref("ais_config/enabled").set(!feedEnabled);
+    } catch (e) {
+      console.error("[AIS feed toggle]", e);
+    } finally {
+      setFeedToggling(false);
     }
   };
 
@@ -183,15 +227,36 @@ function AIS() {
     <React.Fragment>
       <Helmet title="AIS" />
 
-      <Box mb={3}>
-        <Typography variant="h4" gutterBottom>
-          AIS &amp; GPS Targets
-        </Typography>
-        {lastRefresh && (
-          <Typography variant="caption" color="text.secondary">
-            Refreshed {lastRefresh.toLocaleTimeString()} · auto-updates every 30s
+      <Box mb={3} display="flex" alignItems="flex-start" justifyContent="space-between" flexWrap="wrap" gap={2}>
+        <Box>
+          <Typography variant="h4" gutterBottom>
+            AIS &amp; GPS Targets
           </Typography>
-        )}
+          {lastRefresh && (
+            <Typography variant="caption" color="text.secondary">
+              Refreshed {lastRefresh.toLocaleTimeString()} · auto-updates every 30s
+            </Typography>
+          )}
+        </Box>
+
+        <Tooltip title={feedEnabled === null ? "Loading feed status..." : feedEnabled ? "Stop AIS feed ingestion" : "Start AIS feed ingestion"}>
+          <span>
+            <Button
+              variant="contained"
+              color={feedEnabled ? "error" : "success"}
+              disabled={feedEnabled === null || feedToggling}
+              startIcon={feedToggling ? <CircularProgress size={16} color="inherit" /> : feedEnabled ? <Square size={16} /> : <Play size={16} />}
+              onClick={toggleFeed}
+              sx={{ minWidth: 160, fontWeight: 600 }}
+            >
+              {feedEnabled === null
+                ? "Loading..."
+                : feedEnabled
+                ? "Stop AIS Feed"
+                : "Start AIS Feed"}
+            </Button>
+          </span>
+        </Tooltip>
       </Box>
 
       {loading ? (

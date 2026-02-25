@@ -89,8 +89,12 @@ export async function getSpotDetail(spotId) {
   return callFunction('getSpotDetail', { spotId });
 }
 
-export async function fixSpotIds() {
-  return callFunction('fixSpotIds', {});
+export async function deduplicateSpots(spotIds, dryRun) {
+  return callFunction('deduplicateSpots', { spotIds, dryRun });
+}
+
+export async function purgeDeletedSpots(dryRun) {
+  return callFunction('purgeDeletedSpots', { dryRun });
 }
 
 export async function bulkUpdateRegion(region) {

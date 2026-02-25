@@ -49,7 +49,8 @@ import {
   moderateComment,
   importSpots,
   getSpotDetail,
-  fixSpotIds,
+  deduplicateSpots,
+  purgeDeletedSpots,
   bulkUpdateRegion,
 } from "@/services/spotsAdmin";
 
@@ -190,6 +191,16 @@ function Spots() {
   const [regionDialogOpen, setRegionDialogOpen] = useState(false);
   const [selectedRegion, setSelectedRegion] = useState("");
   
+  // Deduplication state
+  const [dedupDialogOpen, setDedupDialogOpen] = useState(false);
+  const [dedupResult, setDedupResult] = useState(null);
+  const [dedupLoading, setDedupLoading] = useState(false);
+  
+  // Purge deleted state
+  const [purgeDialogOpen, setPurgeDialogOpen] = useState(false);
+  const [purgeResult, setPurgeResult] = useState(null);
+  const [purgeLoading, setPurgeLoading] = useState(false);
+  
   // Edit dialog state
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editForm, setEditForm] = useState({});
@@ -318,15 +329,44 @@ function Spots() {
     }
   };
   
-  const handleFixSpotIds = async () => {
-    if (!confirm('Fix all spots missing id field? This is a one-time operation.')) return;
-    
+  const handleDeduplicateSpots = async (dryRun = true) => {
+    setDedupLoading(true);
     try {
-      const result = await fixSpotIds();
-      alert(`Success! Fixed ${result.fixed} spots, ${result.alreadyHasId} already had correct id.`);
-      await loadSpots();
+      // Use selected rows if any, otherwise check all spots
+      const spotIds = selectedRows.length > 0 ? selectedRows : [];
+      const result = await deduplicateSpots(spotIds, dryRun);
+      setDedupResult(result);
+      
+      if (!dryRun) {
+        alert(`Success! ${result.message}`);
+        setDedupDialogOpen(false);
+        setDedupResult(null);
+        setSelectedRows([]);
+        await loadSpots();
+      }
     } catch (e) {
-      alert(`Fix failed: ${e.message}`);
+      alert(`Deduplication failed: ${e.message}`);
+    } finally {
+      setDedupLoading(false);
+    }
+  };
+  
+  const handlePurgeDeletedSpots = async (dryRun = true) => {
+    setPurgeLoading(true);
+    try {
+      const result = await purgeDeletedSpots(dryRun);
+      setPurgeResult(result);
+      
+      if (!dryRun) {
+        alert(`Success! ${result.message}`);
+        setPurgeDialogOpen(false);
+        setPurgeResult(null);
+        await loadSpots();
+      }
+    } catch (e) {
+      alert(`Purge failed: ${e.message}`);
+    } finally {
+      setPurgeLoading(false);
     }
   };
   
@@ -882,10 +922,26 @@ function Spots() {
               <Button
                 size="small"
                 variant="outlined"
-                onClick={handleFixSpotIds}
+                onClick={() => {
+                  setDedupDialogOpen(true);
+                  handleDeduplicateSpots(true);
+                }}
                 sx={{ mr: 1 }}
               >
-                Fix Spot IDs
+                Deduplicate {selectedRows.length > 0 ? `Selected (${selectedRows.length})` : 'All'}
+              </Button>
+              
+              <Button
+                size="small"
+                variant="outlined"
+                color="error"
+                onClick={() => {
+                  setPurgeDialogOpen(true);
+                  handlePurgeDeletedSpots(true);
+                }}
+                sx={{ mr: 1 }}
+              >
+                Purge Deleted
               </Button>
               
               <IconButton onClick={loadSpots} disabled={loading}>
@@ -1334,6 +1390,149 @@ function Spots() {
           >
             Delete {selectedRows.length} Spot{selectedRows.length !== 1 ? 's' : ''}
           </Button>
+        </DialogActions>
+      </Dialog>
+      
+      {/* Deduplication Dialog */}
+      <Dialog open={dedupDialogOpen} onClose={() => setDedupDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Deduplicate Spots</DialogTitle>
+        <DialogContent>
+          {dedupLoading && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+              <CircularProgress />
+            </Box>
+          )}
+          
+          {!dedupLoading && dedupResult && (
+            <>
+              <Alert severity={dedupResult.duplicateGroups.length > 0 ? "warning" : "success"} sx={{ mb: 2 }}>
+                {dedupResult.message}
+              </Alert>
+              
+              {dedupResult.duplicateGroups.length > 0 && (
+                <>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Found {dedupResult.duplicateGroups.length} duplicate group{dedupResult.duplicateGroups.length !== 1 ? 's' : ''} 
+                    ({dedupResult.toDelete} spot{dedupResult.toDelete !== 1 ? 's' : ''} to delete).
+                    Spots are matched by name and location (within ~11m). Priority: photos &gt; ratings &gt; oldest.
+                  </Typography>
+                  
+                  <Box sx={{ maxHeight: 400, overflow: 'auto' }}>
+                    {dedupResult.duplicateGroups.map((group, idx) => (
+                      <Paper key={idx} sx={{ p: 2, mb: 2, bgcolor: 'background.default' }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 1 }}>
+                          {group.name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                          {group.location}
+                        </Typography>
+                        
+                        <Stack spacing={1}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Chip label="KEEP" color="success" size="small" />
+                            <Typography variant="body2">
+                              ID: {group.keeper.id}
+                              {group.keeper.hasPhotos && ' • Has Photos'}
+                              {group.keeper.hasRatings && ' • Has Ratings'}
+                            </Typography>
+                          </Box>
+                          
+                          {group.duplicates.map((dup, dupIdx) => (
+                            <Box key={dupIdx} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <Chip label="DELETE" color="error" size="small" />
+                              <Typography variant="body2">
+                                ID: {dup.id}
+                                {dup.hasPhotos && ' • Has Photos'}
+                                {dup.hasRatings && ' • Has Ratings'}
+                              </Typography>
+                            </Box>
+                          ))}
+                        </Stack>
+                      </Paper>
+                    ))}
+                  </Box>
+                </>
+              )}
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => {
+            setDedupDialogOpen(false);
+            setDedupResult(null);
+          }}>
+            Cancel
+          </Button>
+          {dedupResult && dedupResult.duplicateGroups.length > 0 && dedupResult.dryRun && (
+            <Button
+              variant="contained"
+              color="error"
+              onClick={() => handleDeduplicateSpots(false)}
+              disabled={dedupLoading}
+            >
+              Delete {dedupResult.toDelete} Duplicate{dedupResult.toDelete !== 1 ? 's' : ''}
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
+      
+      {/* Purge Deleted Dialog */}
+      <Dialog open={purgeDialogOpen} onClose={() => setPurgeDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Purge Deleted Spots</DialogTitle>
+        <DialogContent>
+          {purgeLoading && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+              <CircularProgress />
+            </Box>
+          )}
+          
+          {!purgeLoading && purgeResult && (
+            <>
+              <Alert severity={purgeResult.purged > 0 || purgeResult.spots?.length > 0 ? "warning" : "info"} sx={{ mb: 2 }}>
+                {purgeResult.message}
+              </Alert>
+              
+              {purgeResult.spots && purgeResult.spots.length > 0 && (
+                <>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    ⚠️ <strong>WARNING:</strong> This will permanently delete {purgeResult.spots.length} spot{purgeResult.spots.length !== 1 ? 's' : ''} from the database. 
+                    This action <strong>CANNOT be undone</strong>.
+                  </Typography>
+                  
+                  <Box sx={{ maxHeight: 400, overflow: 'auto' }}>
+                    {purgeResult.spots.map((spot, idx) => (
+                      <Paper key={idx} sx={{ p: 2, mb: 1, bgcolor: 'background.default' }}>
+                        <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                          {spot.name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          ID: {spot.id} • Region: {spot.region || 'Unknown'}
+                        </Typography>
+                      </Paper>
+                    ))}
+                  </Box>
+                </>
+              )}
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => {
+            setPurgeDialogOpen(false);
+            setPurgeResult(null);
+          }}>
+            Cancel
+          </Button>
+          {purgeResult && purgeResult.spots?.length > 0 && purgeResult.dryRun && (
+            <Button
+              variant="contained"
+              color="error"
+              onClick={() => handlePurgeDeletedSpots(false)}
+              disabled={purgeLoading}
+            >
+              Permanently Delete {purgeResult.spots.length} Spot{purgeResult.spots.length !== 1 ? 's' : ''}
+            </Button>
+          )}
         </DialogActions>
       </Dialog>
     </React.Fragment>

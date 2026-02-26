@@ -11,12 +11,8 @@ import {
   Typography,
 } from "@mui/material";
 import { Radio, Satellite, GitMerge, Layers, Clock, Play, Square } from "lucide-react";
-import {
-  ComposableMap,
-  Geographies,
-  Geography,
-  Marker,
-} from "react-simple-maps";
+import mapboxgl from "mapbox-gl";
+import "mapbox-gl/dist/mapbox-gl.css";
 import { fetchAisStats } from "@/services/aisStats";
 import firebase from "firebase/app";
 import "firebase/database";
@@ -27,7 +23,7 @@ if (!firebase.apps.length) {
 }
 const rtdb = firebase.database();
 
-const GEO_URL = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
+mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 
 // ── Stat chip ────────────────────────────────────────────────────────────────
 
@@ -73,54 +69,129 @@ function StatChip({ icon: Icon, label, value, color }) {
 
 // ── World map with vessel dots ─────────────────────────────────────────────────
 
-function WorldMap({ vessels }) {
+function WorldMap({ vessels, onMapMoveEnd }) {
+  const mapContainer = useRef(null);
+  const map = useRef(null);
+  const moveEndTimeout = useRef(null);
+  const onMapMoveEndRef = useRef(onMapMoveEnd);
   const colorMap = { ais: "#2196f3", gps: "#4caf50", merged: "#e040fb" };
 
-  const dots = vessels.filter((v) => v.lat != null && v.lng != null);
+  // Keep callback ref up to date
+  useEffect(() => {
+    onMapMoveEndRef.current = onMapMoveEnd;
+  }, [onMapMoveEnd]);
+
+  // Initialize map
+  useEffect(() => {
+    if (map.current) return; // Initialize only once
+
+    map.current = new mapboxgl.Map({
+      container: mapContainer.current,
+      style: "mapbox://styles/mapbox/streets-v12",
+      center: [0, 20],
+      zoom: 1.5,
+    });
+
+    // Add controls
+    map.current.addControl(new mapboxgl.NavigationControl(), "top-right");
+    map.current.addControl(new mapboxgl.FullscreenControl(), "top-right");
+    map.current.addControl(new mapboxgl.ScaleControl(), "bottom-left");
+
+    // Add vessel source and layer when map loads
+    map.current.on("load", () => {
+      map.current.addSource("vessels", {
+        type: "geojson",
+        data: {
+          type: "FeatureCollection",
+          features: [],
+        },
+      });
+
+      map.current.addLayer({
+        id: "vessel-circles",
+        type: "circle",
+        source: "vessels",
+        paint: {
+          "circle-radius": 4,
+          "circle-color": [
+            "match",
+            ["get", "source"],
+            "ais",
+            "#2196f3",
+            "gps",
+            "#4caf50",
+            "merged",
+            "#e040fb",
+            "#999999",
+          ],
+          "circle-opacity": 0.85,
+          "circle-stroke-width": 1,
+          "circle-stroke-color": "#ffffff",
+        },
+      });
+    });
+
+    // Listen for map movement and trigger refresh after 3 seconds of inactivity
+    const handleMoveEnd = () => {
+      if (moveEndTimeout.current) {
+        clearTimeout(moveEndTimeout.current);
+      }
+      moveEndTimeout.current = setTimeout(() => {
+        if (onMapMoveEndRef.current) {
+          onMapMoveEndRef.current();
+        }
+      }, 3000);
+    };
+
+    map.current.on("moveend", handleMoveEnd);
+    map.current.on("zoomend", handleMoveEnd);
+
+    return () => {
+      if (moveEndTimeout.current) {
+        clearTimeout(moveEndTimeout.current);
+      }
+      map.current?.remove();
+    };
+  }, []);
+
+  // Update vessel markers when data changes
+  useEffect(() => {
+    if (!map.current || !map.current.isStyleLoaded()) return;
+
+    const dots = vessels.filter((v) => v.lat != null && v.lng != null);
+
+    const geojson = {
+      type: "FeatureCollection",
+      features: dots.map((vessel) => ({
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [vessel.lng, vessel.lat],
+        },
+        properties: {
+          source: vessel.source,
+        },
+      })),
+    };
+
+    const source = map.current.getSource("vessels");
+    if (source) {
+      source.setData(geojson);
+    }
+  }, [vessels]);
 
   return (
     <Box
       sx={{
         width: "75%",
+        height: "500px",
         borderRadius: 2,
         overflow: "hidden",
         border: "1px solid",
         borderColor: "divider",
-        bgcolor: "#cfe8f7",
       }}
     >
-      <ComposableMap
-        projection="geoNaturalEarth1"
-        projectionConfig={{ scale: 153, center: [0, 0] }}
-        viewBox="0 80 800 400"
-        style={{ width: "100%", height: "auto" }}
-      >
-          <Geographies geography={GEO_URL}>
-            {({ geographies }) =>
-              geographies.map((geo) => (
-                <Geography
-                  key={geo.rsmKey}
-                  geography={geo}
-                  fill="#e3eaef"
-                  stroke="#b0bec5"
-                  strokeWidth={0.5}
-                  style={{ default: { outline: "none" }, hover: { outline: "none" }, pressed: { outline: "none" } }}
-                />
-              ))
-            }
-          </Geographies>
-          {dots.map((d, i) => (
-            <Marker key={i} coordinates={[d.lng, d.lat]}>
-              <circle
-                r={3}
-                fill={colorMap[d.source] ?? "#999"}
-                fillOpacity={0.85}
-                stroke="#fff"
-                strokeWidth={0.5}
-              />
-            </Marker>
-          ))}
-      </ComposableMap>
+      <div ref={mapContainer} style={{ width: "100%", height: "100%" }} />
     </Box>
   );
 }
@@ -319,7 +390,7 @@ function AIS() {
             <Legend />
           </Box>
 
-          <WorldMap vessels={stats?.vessels ?? []} />
+          <WorldMap vessels={stats?.vessels ?? []} onMapMoveEnd={load} />
         </>
       )}
     </React.Fragment>

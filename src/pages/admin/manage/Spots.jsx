@@ -52,6 +52,7 @@ import {
   deduplicateSpots,
   purgeDeletedSpots,
   bulkUpdateRegion,
+  migrateSpotSchema,
 } from "@/services/spotsAdmin";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -82,6 +83,26 @@ const TYPE_COLORS = {
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatDate(timestamp) {
+  if (!timestamp) return "—";
+  try {
+    // Handle Firestore Timestamp objects
+    const date = timestamp?.toDate ? timestamp.toDate() : 
+                 timestamp?._seconds ? new Date(timestamp._seconds * 1000) :
+                 new Date(timestamp);
+    
+    if (isNaN(date.getTime())) return "—";
+    
+    return date.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric' 
+    });
+  } catch (e) {
+    return "—";
+  }
+}
 
 function relativeTime(timestamp) {
   if (!timestamp) return "—";
@@ -164,7 +185,7 @@ function Spots() {
   const [spots, setSpots] = useState([]);
   const [spotsPageToken, setSpotsPageToken] = useState(null);
   const [totalCount, setTotalCount] = useState(0);
-  const [filters, setFilters] = useState({ deleted: false, region: "", nameSearch: "" });
+  const [filters, setFilters] = useState({ deleted: false, region: "", nameSearch: "", startDate: null, endDate: null });
   const [selectedSpot, setSelectedSpot] = useState(null);
   const [selectedRows, setSelectedRows] = useState([]);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
@@ -204,6 +225,11 @@ function Spots() {
   // Edit dialog state
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editForm, setEditForm] = useState({});
+  
+  // Migration state
+  const [migrateDialogOpen, setMigrateDialogOpen] = useState(false);
+  const [migrateResult, setMigrateResult] = useState(null);
+  const [migrateLoading, setMigrateLoading] = useState(false);
 
   // ── Load spots ─────────────────────────────────────────────────────────────
   
@@ -211,7 +237,9 @@ function Spots() {
     setLoading(true);
     setError(null);
     try {
-      const result = await listSpots(500, null, filters);
+      // Increase page size to 10000 to fetch all spots (was 500)
+      // TODO: Implement proper pagination if spot count exceeds 10000
+      const result = await listSpots(10000, null, filters);
       let filteredSpots = result.spots || [];
       
       // Apply client-side name search filter
@@ -225,6 +253,11 @@ function Spots() {
       setSpots(filteredSpots);
       setTotalCount(filteredSpots.length);
       setSpotsPageToken(result.pageToken);
+      
+      // Log if we might be hitting the limit
+      if (filteredSpots.length >= 10000) {
+        console.warn('⚠️ Fetched 10000+ spots - may need pagination');
+      }
     } catch (e) {
       setError(`Failed to load spots: ${e.message}`);
     } finally {
@@ -389,6 +422,25 @@ function Spots() {
     }
   };
   
+  const handleMigrateSchema = async (dryRun = true) => {
+    setMigrateLoading(true);
+    try {
+      const result = await migrateSpotSchema(dryRun);
+      setMigrateResult(result);
+      
+      if (!dryRun) {
+        alert(`Success! ${result.message}\nMigrated: ${result.migrated}\nSkipped: ${result.skipped}`);
+        setMigrateDialogOpen(false);
+        setMigrateResult(null);
+        await loadSpots();
+      }
+    } catch (e) {
+      alert(`Migration failed: ${e.message}`);
+    } finally {
+      setMigrateLoading(false);
+    }
+  };
+  
   const handleBulkDelete = async () => {
     if (selectedRows.length === 0) {
       alert('No spots selected');
@@ -539,8 +591,8 @@ function Spots() {
     {
       field: "createdAt",
       headerName: "Created",
-      width: 120,
-      renderCell: (params) => relativeTime(params.value),
+      width: 130,
+      renderCell: (params) => formatDate(params.value),
     },
     {
       field: "deleted",
@@ -892,6 +944,30 @@ function Spots() {
                 </Select>
               </FormControl>
               
+              <TextField
+                size="small"
+                type="date"
+                label="Start Date"
+                value={filters.startDate || ""}
+                onChange={(e) =>
+                  setFilters({ ...filters, startDate: e.target.value || null })
+                }
+                InputLabelProps={{ shrink: true }}
+                sx={{ minWidth: 150 }}
+              />
+              
+              <TextField
+                size="small"
+                type="date"
+                label="End Date"
+                value={filters.endDate || ""}
+                onChange={(e) =>
+                  setFilters({ ...filters, endDate: e.target.value || null })
+                }
+                InputLabelProps={{ shrink: true }}
+                sx={{ minWidth: 150 }}
+              />
+              
               <Box sx={{ flexGrow: 1 }} />
               
               <Typography variant="body2" sx={{ mr: 2, fontWeight: 600 }}>
@@ -942,6 +1018,19 @@ function Spots() {
                 sx={{ mr: 1 }}
               >
                 Purge Deleted
+              </Button>
+              
+              <Button
+                size="small"
+                variant="outlined"
+                color="warning"
+                onClick={() => {
+                  setMigrateDialogOpen(true);
+                  handleMigrateSchema(true);
+                }}
+                sx={{ mr: 1 }}
+              >
+                Migrate Schema
               </Button>
               
               <IconButton onClick={loadSpots} disabled={loading}>
@@ -1531,6 +1620,81 @@ function Spots() {
               disabled={purgeLoading}
             >
               Permanently Delete {purgeResult.spots.length} Spot{purgeResult.spots.length !== 1 ? 's' : ''}
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
+      
+      {/* Migrate Schema Dialog */}
+      <Dialog open={migrateDialogOpen} onClose={() => setMigrateDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Migrate Spot Schema</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            This migration adds missing fields (region, deleted, updatedAt) to all spots in Firestore.
+            This is required for incremental sync to work correctly.
+          </Typography>
+          
+          {migrateLoading && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+              <CircularProgress />
+            </Box>
+          )}
+          
+          {!migrateLoading && migrateResult && (
+            <>
+              <Alert severity={migrateResult.migrated > 0 ? "warning" : "info"} sx={{ mb: 2 }}>
+                {migrateResult.message}
+              </Alert>
+              
+              <Stack spacing={2}>
+                <Box>
+                  <Typography variant="body2">
+                    <strong>Total spots:</strong> {migrateResult.total}
+                  </Typography>
+                  <Typography variant="body2">
+                    <strong>Need migration:</strong> {migrateResult.migrated}
+                  </Typography>
+                  <Typography variant="body2">
+                    <strong>Already up-to-date:</strong> {migrateResult.skipped}
+                  </Typography>
+                  {migrateResult.errors?.length > 0 && (
+                    <Typography variant="body2" color="error">
+                      <strong>Errors:</strong> {migrateResult.errors.length}
+                    </Typography>
+                  )}
+                </Box>
+                
+                {migrateResult.regionCounts && Object.keys(migrateResult.regionCounts).length > 0 && (
+                  <Box>
+                    <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1 }}>
+                      Region Distribution:
+                    </Typography>
+                    {Object.entries(migrateResult.regionCounts).map(([region, count]) => (
+                      <Typography key={region} variant="caption" display="block">
+                        {region}: {count}
+                      </Typography>
+                    ))}
+                  </Box>
+                )}
+              </Stack>
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => {
+            setMigrateDialogOpen(false);
+            setMigrateResult(null);
+          }}>
+            Cancel
+          </Button>
+          {migrateResult && migrateResult.migrated > 0 && migrateResult.dryRun && (
+            <Button
+              variant="contained"
+              color="warning"
+              onClick={() => handleMigrateSchema(false)}
+              disabled={migrateLoading}
+            >
+              Run Migration ({migrateResult.migrated} spots)
             </Button>
           )}
         </DialogActions>

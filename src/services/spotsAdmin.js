@@ -100,3 +100,7 @@ export async function purgeDeletedSpots(dryRun) {
 export async function bulkUpdateRegion(region) {
   return callFunction('bulkUpdateRegion', { region });
 }
+
+export async function migrateSpotSchema(dryRun) {
+  return callFunction('migrateSpotSchema', { dryRun });
+}

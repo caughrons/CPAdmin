@@ -23,5 +23,6 @@
       "@/mocks": ["mocks/index"],
       "@/theme": ["theme/index"],
     }
-  }
+  },
+  "exclude": ["node_modules", "dist", "build"]
 }

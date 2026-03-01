@@ -970,6 +970,12 @@ function Spots() {
               
               <Box sx={{ flexGrow: 1 }} />
               
+              <IconButton onClick={loadSpots} disabled={loading}>
+                <RefreshCw size={18} />
+              </IconButton>
+            </Stack>
+            
+            <Box sx={{ mt: 2, display: 'flex', alignItems: 'center' }}>
               <Typography variant="body2" sx={{ mr: 2, fontWeight: 600 }}>
                 Total: {totalCount} spot{totalCount !== 1 ? 's' : ''}
               </Typography>
@@ -1032,11 +1038,7 @@ function Spots() {
               >
                 Migrate Schema
               </Button>
-              
-              <IconButton onClick={loadSpots} disabled={loading}>
-                <RefreshCw size={18} />
-              </IconButton>
-            </Stack>
+            </Box>
           </Box>
           
           {loading && <LinearProgress />}

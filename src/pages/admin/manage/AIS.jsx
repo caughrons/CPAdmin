@@ -183,7 +183,7 @@ function WorldMap({ vessels, onMapMoveEnd }) {
   return (
     <Box
       sx={{
-        width: "75%",
+        width: "100%",
         height: "500px",
         borderRadius: 2,
         overflow: "hidden",

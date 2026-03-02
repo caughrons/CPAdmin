@@ -1,7 +1,9 @@
 {
   "compilerOptions": {
     "skipLibCheck": true,
+    "checkJs": false,
     "baseUrl": "src/",
+    "types": [],
     "paths": {
       // Folders
       "@/components/*": ["components/*"],

@@ -1,56 +1,23 @@
 import firebase from "firebase/app";
 import "firebase/auth";
+import "firebase/functions";
 import { firebaseConfig } from "@/config";
 
 if (!firebase.apps.length) {
   firebase.initializeApp(firebaseConfig);
 }
 
-const PROJECT_ID = firebaseConfig.projectId;
-const REGION = 'us-central1';
-
-function getFunctionUrl(functionName) {
-  return `https://${REGION}-${PROJECT_ID}.cloudfunctions.net/${functionName}`;
-}
-
-async function waitForUser() {
-  return new Promise((resolve) => {
-    const unsubscribe = firebase.auth().onAuthStateChanged((user) => {
-      unsubscribe();
-      resolve(user);
-    });
-  });
-}
+const functions = firebase.functions();
 
 async function callFunction(functionName, data) {
-  const user = await waitForUser();
-  if (!user) {
-    throw new Error('Not authenticated');
+  try {
+    const callable = functions.httpsCallable(functionName);
+    const result = await callable(data);
+    return result.data;
+  } catch (error) {
+    console.error(`Function ${functionName} error:`, error);
+    throw new Error(error.message || 'Function call failed');
   }
-
-  const token = await user.getIdToken();
-  const url = getFunctionUrl(functionName);
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-    },
-    body: JSON.stringify({ data }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || `HTTP ${response.status}`);
-  }
-
-  const result = await response.json();
-  if (result.error) {
-    throw new Error(result.error.message || 'Function error');
-  }
-
-  return result.result;
 }
 
 export async function listSpots(pageSize, pageToken, filters) {

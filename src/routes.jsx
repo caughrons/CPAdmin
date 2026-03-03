@@ -19,7 +19,7 @@ import Page500 from "@/pages/auth/Page500";
 // Admin pages — Overview
 import Activity from "@/pages/admin/Activity";
 import Health from "@/pages/admin/Health";
-import Financials from "@/pages/admin/Expenses";
+import Expenses from "@/pages/admin/Expenses";
 import Ecommerce from "@/pages/admin/Ecommerce";
 
 // Admin pages — Manage
@@ -37,7 +37,6 @@ import AIS from "@/pages/admin/manage/AIS";
 import AdminChat from "@/pages/admin/manage/Chat";
 import MigrateSpots from "@/pages/admin/MigrateSpots";
 import TestFirestoreQuery from "@/pages/admin/TestFirestoreQuery";
-import TileManagement from "@/pages/maps/TileManagement";
 
 // Admin pages — System
 import Hosting from "@/pages/admin/Hosting";
@@ -56,10 +55,9 @@ const routes = [
       { index: true, element: <Navigate to="/activity" replace /> },
       { path: "activity", element: <Activity /> },
       { path: "health", element: <Health /> },
-      { path: "financials", element: <Financials /> },
+      { path: "expenses", element: <Expenses /> },
       { path: "ecommerce", element: <Ecommerce /> },
       { path: "hosting", element: <Hosting /> },
-      { path: "maps/tile-management", element: <TileManagement /> },
       { path: "migrate-spots", element: <MigrateSpots /> },
       { path: "test-firestore-query", element: <TestFirestoreQuery /> },
       {

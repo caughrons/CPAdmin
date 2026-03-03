@@ -35,6 +35,8 @@ import Waypoints from "@/pages/admin/manage/Waypoints";
 import MapAdmin from "@/pages/admin/manage/MapAdmin";
 import AIS from "@/pages/admin/manage/AIS";
 import AdminChat from "@/pages/admin/manage/Chat";
+import MigrateSpots from "@/pages/admin/MigrateSpots";
+import TestFirestoreQuery from "@/pages/admin/TestFirestoreQuery";
 
 // Admin pages — System
 import Hosting from "@/pages/admin/Hosting";
@@ -56,6 +58,8 @@ const routes = [
       { path: "expenses", element: <Expenses /> },
       { path: "ecommerce", element: <Ecommerce /> },
       { path: "hosting", element: <Hosting /> },
+      { path: "migrate-spots", element: <MigrateSpots /> },
+      { path: "test-firestore-query", element: <TestFirestoreQuery /> },
       {
         path: "manage",
         children: [

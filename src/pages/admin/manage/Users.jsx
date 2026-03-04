@@ -45,6 +45,8 @@ import {
   deleteUser,
   restoreUser,
   getUserDetail,
+  getUserAdsDisabled,
+  setUserAdsDisabled,
 } from "@/services/userAdmin";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -225,12 +227,16 @@ function DetailDrawer({ user, open, onClose, onAction }) {
   const [suspendDialogOpen, setSuspendDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [adsDisabled, setAdsDisabled] = useState(false);
 
   useEffect(() => {
     if (!open || !user) { setDetail(null); return; }
     setDetailLoading(true);
-    getUserDetail(user.uid)
-      .then(setDetail)
+    Promise.all([getUserDetail(user.uid), getUserAdsDisabled(user.uid)])
+      .then(([detailResp, adsDisabledResp]) => {
+        setDetail(detailResp);
+        setAdsDisabled(adsDisabledResp);
+      })
       .catch((e) => console.error("[UserDetail]", e))
       .finally(() => setDetailLoading(false));
   }, [open, user]);
@@ -247,6 +253,20 @@ function DetailDrawer({ user, open, onClose, onAction }) {
       setActionLoading(false);
     }
   }, [onAction]);
+
+  const handleAdsToggle = useCallback(async () => {
+    if (!user) return;
+    setActionLoading(true);
+    try {
+      const next = !adsDisabled;
+      await setUserAdsDisabled(user.uid, next);
+      setAdsDisabled(next);
+    } catch (e) {
+      console.error("[UserAdsDisabled]", e);
+    } finally {
+      setActionLoading(false);
+    }
+  }, [adsDisabled, user]);
 
   if (!user) return null;
 
@@ -329,6 +349,22 @@ function DetailDrawer({ user, open, onClose, onAction }) {
             <DetailRow label="Chats" value={detail?.counts?.chats} />
           </Stack>
         )}
+
+        <Divider sx={{ mb: 2 }} />
+
+        {/* Ads */}
+        <Typography variant="overline" color="text.secondary">Ads</Typography>
+        <Stack spacing={1} mt={1} mb={2}>
+          <Button
+            fullWidth
+            variant={adsDisabled ? "contained" : "outlined"}
+            color={adsDisabled ? "success" : "inherit"}
+            onClick={handleAdsToggle}
+            disabled={actionLoading}
+          >
+            {adsDisabled ? "Ad-free Enabled" : "Enable Ad-free"}
+          </Button>
+        </Stack>
 
         <Divider sx={{ mb: 2 }} />
 

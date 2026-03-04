@@ -7,6 +7,11 @@ service cloud.firestore {
       return request.auth != null && request.auth.token.admin == true;
     }
 
+    // App config (ads config, etc.) — admin read/write
+    match /app_config/{docId} {
+      allow read, write: if isAdmin();
+    }
+
     // All collections — admin full read, write restricted per collection
     match /{document=**} {
       allow read: if isAdmin();

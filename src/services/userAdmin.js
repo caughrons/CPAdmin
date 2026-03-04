@@ -1,10 +1,13 @@
 import firebase from "firebase/app";
 import "firebase/auth";
+import "firebase/firestore";
 import { firebaseConfig } from "@/config";
 
 if (!firebase.apps.length) {
   firebase.initializeApp(firebaseConfig);
 }
+
+const firestore = firebase.firestore();
 
 const PROJECT_ID = firebaseConfig.projectId;
 const REGION = "us-central1";
@@ -96,4 +99,23 @@ export async function restoreUser(uid) {
 /** Fetch RTDB profile + activity counts for a single user. */
 export async function getUserDetail(uid) {
   return await callFunction("getUserDetail", { uid });
+}
+
+export async function getUserAdsDisabled(uid) {
+  const snap = await firestore
+    .collection("users")
+    .doc(uid)
+    .collection("settings")
+    .doc("app")
+    .get();
+  return snap.data()?.adsDisabled === true;
+}
+
+export async function setUserAdsDisabled(uid, disabled) {
+  await firestore
+    .collection("users")
+    .doc(uid)
+    .collection("settings")
+    .doc("app")
+    .set({ adsDisabled: !!disabled }, { merge: true });
 }

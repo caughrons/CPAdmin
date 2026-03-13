@@ -7,7 +7,6 @@ import {
   Box,
   Button,
   Chip,
-  CircularProgress,
   Divider,
   FormControl,
   InputLabel,
@@ -24,7 +23,7 @@ import {
 import { DataGrid } from "@mui/x-data-grid";
 import { spacing } from "@mui/system";
 import { useTheme } from "@mui/material/styles";
-import { RefreshCw, Trash2, Play, Square } from "lucide-react";
+import { RefreshCw, Trash2 } from "lucide-react";
 import {
   fetchCruisnewsStories,
   getCruisnewsPrompt,
@@ -32,11 +31,6 @@ import {
   runCruisnewsPrompt,
   saveCruisnewsPrompt,
 } from "@/services/cruisnewsAdmin";
-import { AuthContext } from "@/contexts/FirebaseAuthContext";
-import firebase from "firebase/app";
-import "firebase/database";
-
-const rtdb = firebase.database();
 
 const ChartCard = styled(Paper)(spacing);
 const ChartWrapper = styled.div`
@@ -86,7 +80,6 @@ function getDayKey(date) {
 
 function News() {
   const theme = useTheme();
-  const { isInitialized, isAuthenticated } = React.useContext(AuthContext);
   const [tab, setTab] = useState(0);
   const [stories, setStories] = useState([]);
   const [storiesLoading, setStoriesLoading] = useState(false);
@@ -101,10 +94,6 @@ function News() {
     region: "",
     section: "",
   });
-
-  // News Feed control state
-  const [newsFeedEnabled, setNewsFeedEnabled] = useState(null);
-  const [newsFeedToggling, setNewsFeedToggling] = useState(false);
 
   const [promptLoading, setPromptLoading] = useState(false);
   const [promptSaving, setPromptSaving] = useState(false);
@@ -224,59 +213,6 @@ function News() {
       closeDeleteSelected();
     }
   }, [closeDeleteSelected, loadStories, selectedStoryIds]);
-
-  // Monitor News Feed enabled status
-  useEffect(() => {
-    console.log('News Feed useEffect - isInitialized:', isInitialized, 'isAuthenticated:', isAuthenticated);
-    
-    if (!isInitialized || !isAuthenticated) {
-      console.log('News Feed - waiting for auth initialization');
-      return;
-    }
-    
-    console.log('News Feed - setting up RTDB listener');
-    const ref = rtdb.ref('admin/cruisnews_feed_enabled');
-    const listener = ref.on('value', async (snapshot) => {
-      const value = snapshot.val();
-      console.log('News Feed - RTDB value received:', value);
-      
-      if (value === null) {
-        // Initialize to true if not set (scheduled function is already running daily)
-        console.log('News Feed - initializing to true (feed is currently running)');
-        try {
-          await ref.set(true);
-          setNewsFeedEnabled(true);
-        } catch (error) {
-          console.error('Failed to initialize news feed status:', error);
-          setNewsFeedEnabled(true);
-        }
-      } else {
-        setNewsFeedEnabled(value);
-      }
-    });
-    
-    return () => {
-      console.log('News Feed - cleaning up RTDB listener');
-      ref.off('value', listener);
-    };
-  }, [isInitialized, isAuthenticated]);
-
-  const toggleNewsFeed = useCallback(async () => {
-    if (!isAuthenticated || newsFeedEnabled === null) return;
-    
-    const newValue = !newsFeedEnabled;
-    setNewsFeedToggling(true);
-    
-    try {
-      await rtdb.ref('admin/cruisnews_feed_enabled').set(newValue);
-      // State will update via the listener
-    } catch (error) {
-      console.error('Failed to toggle news feed:', error);
-      alert(`Failed to ${newValue ? 'start' : 'stop'} News Feed. Please check your connection and try again.`);
-    } finally {
-      setNewsFeedToggling(false);
-    }
-  }, [isAuthenticated, newsFeedEnabled]);
 
   useEffect(() => {
     if (tab === 1) {
@@ -762,38 +698,13 @@ function News() {
   return (
     <React.Fragment>
       <Helmet title="News" />
-      <Box mb={3} display="flex" alignItems="flex-start" justifyContent="space-between" flexWrap="wrap" gap={2}>
-        <Box>
-          <Typography variant="h3" gutterBottom>
-            CruisNews
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Manage daily stories, publishing schedule, imagery, and the generation prompt.
-          </Typography>
-        </Box>
-        <Tooltip title={
-          !isInitialized ? "Loading..." :
-          !isAuthenticated ? "Sign in required to control News Feed" :
-          newsFeedEnabled === null ? "Loading feed status..." : 
-          newsFeedEnabled ? "Stop daily news gathering" : "Start daily news gathering"
-        }>
-          <span>
-            <Button
-              variant="contained"
-              color={newsFeedEnabled ? "error" : "success"}
-              disabled={!isInitialized || !isAuthenticated || newsFeedEnabled === null || newsFeedToggling}
-              startIcon={newsFeedToggling ? <CircularProgress size={16} color="inherit" /> : newsFeedEnabled ? <Square size={16} /> : <Play size={16} />}
-              onClick={toggleNewsFeed}
-              sx={{ minWidth: 160, fontWeight: 600 }}
-            >
-              {!isInitialized || newsFeedEnabled === null
-                ? "Loading..."
-                : newsFeedEnabled
-                ? "Stop News Feed"
-                : "Start News Feed"}
-            </Button>
-          </span>
-        </Tooltip>
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="h3" gutterBottom>
+          CruisNews
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Manage daily stories, publishing schedule, imagery, and the generation prompt.
+        </Typography>
       </Box>
 
       {storiesError && (

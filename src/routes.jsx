@@ -19,7 +19,7 @@ import Page500 from "@/pages/auth/Page500";
 // Admin pages — Overview
 import Activity from "@/pages/admin/Activity";
 import Health from "@/pages/admin/Health";
-import Expenses from "@/pages/admin/Expenses";
+import Financials from "@/pages/admin/Expenses";
 import Ecommerce from "@/pages/admin/Ecommerce";
 
 // Admin pages — Manage
@@ -55,7 +55,7 @@ const routes = [
       { index: true, element: <Navigate to="/activity" replace /> },
       { path: "activity", element: <Activity /> },
       { path: "health", element: <Health /> },
-      { path: "expenses", element: <Expenses /> },
+      { path: "financials", element: <Financials /> },
       { path: "ecommerce", element: <Ecommerce /> },
       { path: "hosting", element: <Hosting /> },
       { path: "migrate-spots", element: <MigrateSpots /> },

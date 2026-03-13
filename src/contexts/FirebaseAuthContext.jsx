@@ -41,14 +41,15 @@ function AuthProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
 
   useEffect(() => {
-    const unsubscribe = firebase.auth().onAuthStateChanged((user) => {
+    const unsubscribe = firebase.auth().onAuthStateChanged(async (user) => {
       if (user) {
-        user.getIdTokenResult().then((tokenResult) => {
-          const isAdmin = tokenResult.claims.admin === true;
-          dispatch({
-            type: INITIALIZE,
-            payload: { isAuthenticated: true, isAdmin, user },
-          });
+        // Force token refresh to get latest custom claims
+        await user.getIdToken(true);
+        const tokenResult = await user.getIdTokenResult();
+        const isAdmin = tokenResult.claims.admin === true;
+        dispatch({
+          type: INITIALIZE,
+          payload: { isAuthenticated: true, isAdmin, user },
         });
       } else {
         dispatch({

@@ -96,9 +96,9 @@ const navItems = [
         title: "Health",
       },
       {
-        href: "/expenses",
+        href: "/financials",
         icon: DollarSign,
-        title: "Expenses",
+        title: "Financials",
       },
       {
         href: "/ecommerce",

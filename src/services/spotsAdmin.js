@@ -71,3 +71,15 @@ export async function bulkUpdateRegion(region) {
 export async function migrateSpotSchema(dryRun) {
   return callFunction('migrateSpotSchema', { dryRun });
 }
+
+export async function generateSnapshotForSpot(latitude, longitude) {
+  return callFunction('generateSnapshotForSpot', { latitude, longitude });
+}
+
+export async function bulkGenerateSnapshots() {
+  return callFunction('bulkGenerateSnapshots', {});
+}
+
+export async function processSnapshotBatch(spotId) {
+  return callFunction('processSnapshotBatch', { spotId });
+}

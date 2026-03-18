@@ -39,6 +39,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
+import { InputAdornment, IconButton as MuiIconButton } from "@mui/material";
 import {
   listSpots,
   manageSpot,
@@ -53,6 +54,8 @@ import {
   purgeDeletedSpots,
   bulkUpdateRegion,
   migrateSpotSchema,
+  bulkGenerateSnapshots,
+  processSnapshotBatch,
 } from "@/services/spotsAdmin";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -230,6 +233,18 @@ function Spots() {
   const [migrateDialogOpen, setMigrateDialogOpen] = useState(false);
   const [migrateResult, setMigrateResult] = useState(null);
   const [migrateLoading, setMigrateLoading] = useState(false);
+  
+  // Bulk snapshot generation state
+  const [snapshotDialogOpen, setSnapshotDialogOpen] = useState(false);
+  const [snapshotProgress, setSnapshotProgress] = useState({
+    total: 0,
+    processed: 0,
+    successful: 0,
+    failed: 0,
+    errors: [],
+    isProcessing: false,
+    cancelRequested: false
+  });
 
   // ── Load spots ─────────────────────────────────────────────────────────────
   
@@ -441,6 +456,85 @@ function Spots() {
     }
   };
   
+  const handleBulkSnapshotGeneration = async () => {
+    try {
+      setSnapshotProgress({ 
+        total: 0,
+        processed: 0,
+        successful: 0,
+        failed: 0,
+        errors: [],
+        isProcessing: true,
+        cancelRequested: false
+      });
+      
+      // Get list of spots without snapshots
+      const result = await bulkGenerateSnapshots();
+      
+      setSnapshotProgress({
+        total: result.totalSpots,
+        processed: 0,
+        successful: 0,
+        failed: 0,
+        errors: [],
+        isProcessing: true,
+        cancelRequested: false
+      });
+      
+      setSnapshotDialogOpen(true);
+      
+      // Process each spot sequentially
+      for (let i = 0; i < result.spotIds.length; i++) {
+        // Check if cancellation was requested
+        const shouldCancel = await new Promise(resolve => {
+          setSnapshotProgress(prev => {
+            resolve(prev.cancelRequested);
+            return prev;
+          });
+        });
+        
+        if (shouldCancel) {
+          console.log('Snapshot generation cancelled by user');
+          break;
+        }
+        
+        const spotId = result.spotIds[i];
+        
+        try {
+          const batchResult = await processSnapshotBatch(spotId);
+          
+          setSnapshotProgress(prev => ({
+            ...prev,
+            processed: prev.processed + 1,
+            successful: batchResult.success ? prev.successful + 1 : prev.successful,
+            failed: batchResult.success ? prev.failed : prev.failed + 1,
+            errors: batchResult.success ? prev.errors : [...prev.errors, { 
+              spotId, 
+              spotName: batchResult.spotName || spotId,
+              error: batchResult.error 
+            }]
+          }));
+        } catch (error) {
+          setSnapshotProgress(prev => ({
+            ...prev,
+            processed: prev.processed + 1,
+            failed: prev.failed + 1,
+            errors: [...prev.errors, { spotId, error: error.message }]
+          }));
+        }
+        
+        // Small delay between requests
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+      setSnapshotProgress(prev => ({ ...prev, isProcessing: false }));
+      
+    } catch (error) {
+      alert(`Failed to start snapshot generation: ${error.message}`);
+      setSnapshotProgress(prev => ({ ...prev, isProcessing: false, cancelRequested: false }));
+    }
+  };
+  
   const handleBulkDelete = async () => {
     if (selectedRows.length === 0) {
       alert('No spots selected');
@@ -581,6 +675,15 @@ function Spots() {
       width: 100,
       renderCell: (params) =>
         params.value ? `⭐ ${params.value.toFixed(1)}` : "—",
+    },
+    {
+      field: "mapSnapshotR2Key",
+      headerName: "Snapshot",
+      width: 100,
+      renderCell: (params) =>
+        params.value ? (
+          <CheckCircle size={18} color="green" />
+        ) : null,
     },
     {
       field: "photoCount",
@@ -881,7 +984,19 @@ function Spots() {
       {tab === 0 && (
         <Paper>
           <Box sx={{ p: 2, borderBottom: 1, borderColor: "divider" }}>
-            <Stack direction="row" spacing={2} alignItems="center">
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { 
+                  xs: 'repeat(2, 1fr)',
+                  sm: 'repeat(3, 1fr)',
+                  md: 'repeat(4, 1fr)',
+                  lg: 'repeat(6, 1fr)'
+                },
+                gap: 2,
+                '& > *': { width: '100%' }
+              }}
+            >
               <TextField
                 size="small"
                 label="Search Name"
@@ -890,10 +1005,9 @@ function Spots() {
                 onChange={(e) =>
                   setFilters({ ...filters, nameSearch: e.target.value })
                 }
-                sx={{ minWidth: 200 }}
               />
               
-              <FormControl size="small" sx={{ minWidth: 150 }}>
+              <FormControl size="small">
                 <InputLabel>Type</InputLabel>
                 <Select
                   value={filters.type || ""}
@@ -909,7 +1023,7 @@ function Spots() {
                 </Select>
               </FormControl>
               
-              <FormControl size="small" sx={{ minWidth: 150 }}>
+              <FormControl size="small">
                 <InputLabel>Verified</InputLabel>
                 <Select
                   value={filters.verified === undefined ? "" : String(filters.verified)}
@@ -928,7 +1042,7 @@ function Spots() {
                 </Select>
               </FormControl>
               
-              <FormControl size="small" sx={{ minWidth: 150 }}>
+              <FormControl size="small">
                 <InputLabel>Region</InputLabel>
                 <Select
                   value={filters.region || ""}
@@ -953,7 +1067,19 @@ function Spots() {
                   setFilters({ ...filters, startDate: e.target.value || null })
                 }
                 InputLabelProps={{ shrink: true }}
-                sx={{ minWidth: 150 }}
+                InputProps={{
+                  endAdornment: filters.startDate ? (
+                    <InputAdornment position="end">
+                      <MuiIconButton
+                        size="small"
+                        onClick={() => setFilters({ ...filters, startDate: null })}
+                        edge="end"
+                      >
+                        <X size={16} />
+                      </MuiIconButton>
+                    </InputAdornment>
+                  ) : null
+                }}
               />
               
               <TextField
@@ -965,15 +1091,26 @@ function Spots() {
                   setFilters({ ...filters, endDate: e.target.value || null })
                 }
                 InputLabelProps={{ shrink: true }}
-                sx={{ minWidth: 150 }}
+                InputProps={{
+                  endAdornment: filters.endDate ? (
+                    <InputAdornment position="end">
+                      <MuiIconButton
+                        size="small"
+                        onClick={() => setFilters({ ...filters, endDate: null })}
+                        edge="end"
+                      >
+                        <X size={16} />
+                      </MuiIconButton>
+                    </InputAdornment>
+                  ) : null
+                }}
               />
-              
-              <Box sx={{ flexGrow: 1 }} />
-              
+            </Box>
+            <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
               <IconButton onClick={loadSpots} disabled={loading}>
                 <RefreshCw size={18} />
               </IconButton>
-            </Stack>
+            </Box>
             
             <Box sx={{ mt: 2, display: 'flex', alignItems: 'center' }}>
               <Typography variant="body2" sx={{ mr: 2, fontWeight: 600 }}>
@@ -1037,6 +1174,17 @@ function Spots() {
                 sx={{ mr: 1 }}
               >
                 Migrate Schema
+              </Button>
+              
+              <Button
+                size="small"
+                variant="outlined"
+                color="primary"
+                onClick={handleBulkSnapshotGeneration}
+                disabled={snapshotProgress.isProcessing}
+                sx={{ mr: 1 }}
+              >
+                Create Snapshots
               </Button>
             </Box>
           </Box>
@@ -1114,177 +1262,494 @@ function Spots() {
           setDetailDrawerOpen(false);
           setSelectedSpot(null);
           setSpotDetail(null);
+          setEditForm({});
         }}
-        PaperProps={{ sx: { width: 420 } }}
+        PaperProps={{ 
+          sx: { 
+            width: { xs: '100%', sm: '100%', md: 700 },
+            maxWidth: '100%'
+          } 
+        }}
       >
         {selectedSpot && (
-          <Box sx={{ p: 3 }}>
-            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-              <Typography variant="h6" sx={{ flexGrow: 1 }}>
-                {selectedSpot.name}
-              </Typography>
-              <IconButton
-                size="small"
-                onClick={() => {
-                  setDetailDrawerOpen(false);
-                  setSelectedSpot(null);
-                  setSpotDetail(null);
-                }}
-              >
-                <X size={18} />
-              </IconButton>
-            </Stack>
-            
-            <Stack spacing={1} sx={{ mb: 2 }}>
-              <Chip
-                label={selectedSpot.type}
-                color={TYPE_COLORS[selectedSpot.type] || "default"}
-                size="small"
-                sx={{ width: "fit-content" }}
-              />
-              {selectedSpot.verified && (
-                <Chip
-                  label="Verified"
-                  color="success"
-                  size="small"
-                  sx={{ width: "fit-content" }}
-                />
-              )}
-              {selectedSpot.deleted && (
-                <Chip
-                  label="Deleted"
-                  color="error"
-                  size="small"
-                  sx={{ width: "fit-content" }}
-                />
-              )}
-            </Stack>
+          <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+            {/* Header */}
+            <Box sx={{ p: 3, pb: 2, borderBottom: 1, borderColor: 'divider' }}>
+              <Stack direction="row" alignItems="center" spacing={2}>
+                <Box sx={{ flexGrow: 1 }}>
+                  <Typography variant="h5" sx={{ fontWeight: 600, mb: 0.5 }}>
+                    {selectedSpot.name}
+                  </Typography>
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                    <Chip
+                      label={selectedSpot.type}
+                      color={TYPE_COLORS[selectedSpot.type] || "default"}
+                      size="small"
+                    />
+                    {selectedSpot.verified && (
+                      <Chip label="Verified" color="success" size="small" icon={<CheckCircle size={14} />} />
+                    )}
+                    {selectedSpot.deleted && (
+                      <Chip label="Deleted" color="error" size="small" />
+                    )}
+                    {selectedSpot.isPrivate && (
+                      <Chip label="Private" color="warning" size="small" />
+                    )}
+                  </Stack>
+                </Box>
+                <IconButton
+                  onClick={() => {
+                    setDetailDrawerOpen(false);
+                    setSelectedSpot(null);
+                    setSpotDetail(null);
+                    setEditForm({});
+                  }}
+                >
+                  <X size={20} />
+                </IconButton>
+              </Stack>
+            </Box>
             
             {detailLoading ? (
-              <Stack spacing={1} mt={2}>
-                {[1, 2, 3, 4].map(i => <Skeleton key={i} height={20} />)}
-              </Stack>
+              <Box sx={{ p: 3 }}>
+                <Stack spacing={2}>
+                  {[1, 2, 3, 4, 5, 6].map(i => <Skeleton key={i} height={80} />)}
+                </Stack>
+              </Box>
             ) : spotDetail ? (
-              <>
-                <Divider sx={{ my: 2 }} />
-                
-                <Typography variant="overline" color="text.secondary">
-                  Location
-                </Typography>
-                <Stack spacing={0.5} sx={{ mb: 2 }}>
-                  <Typography variant="body2">
-                    Lat: {spotDetail.spot.latitude?.toFixed(6)}
-                  </Typography>
-                  <Typography variant="body2">
-                    Lng: {spotDetail.spot.longitude?.toFixed(6)}
-                  </Typography>
-                  <Typography variant="body2">
-                    Region: {spotDetail.spot.region || "—"}
-                  </Typography>
-                </Stack>
-                
-                {spotDetail.spot.description && (
-                  <>
-                    <Typography variant="overline" color="text.secondary">
-                      Description
+              <Box sx={{ flexGrow: 1, overflowY: 'auto', overflowX: 'hidden', p: { xs: 2, sm: 3 } }}>
+                <Stack spacing={2.5}>
+                  {/* Map Snapshot & Images Section */}
+                  <Paper elevation={0} sx={{ p: 2.5, bgcolor: 'grey.50', border: 1, borderColor: 'divider' }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                      Media
                     </Typography>
-                    <Typography variant="body2" sx={{ mb: 2 }}>
-                      {spotDetail.spot.description}
-                    </Typography>
-                  </>
-                )}
-                
-                <Typography variant="overline" color="text.secondary">
-                  Rating
-                </Typography>
-                <Typography variant="body2" sx={{ mb: 2 }}>
-                  {spotDetail.ratingSummary.average
-                    ? `⭐ ${spotDetail.ratingSummary.average.toFixed(1)} (${spotDetail.ratingSummary.count} ratings)`
-                    : "No ratings yet"}
-                </Typography>
-                
-                {spotDetail.comments && spotDetail.comments.length > 0 && (
-                  <>
-                    <Typography variant="overline" color="text.secondary">
-                      Comments ({spotDetail.comments.length})
-                    </Typography>
-                    <Stack spacing={1} sx={{ mb: 2 }}>
-                      {spotDetail.comments.map(comment => (
-                        <Paper key={comment.id} sx={{ p: 1 }}>
-                          <Stack direction="row" spacing={1} alignItems="center">
-                            <Typography variant="caption" sx={{ flexGrow: 1 }}>
-                              {comment.text}
-                            </Typography>
-                            <IconButton
-                              size="small"
-                              onClick={() => handleModerateComment(comment.id, "delete")}
+                    
+                    {/* Map Snapshot */}
+                    <Box sx={{ mb: 2 }}>
+                      <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                        Map Snapshot
+                      </Typography>
+                      {spotDetail.spot.mapSnapshotR2Key ? (
+                        <Box
+                          component="img"
+                          src={`https://cruisapalooza.com/${spotDetail.spot.mapSnapshotR2Key}`}
+                          alt="Map snapshot"
+                          sx={{
+                            width: '100%',
+                            height: 240,
+                            objectFit: 'cover',
+                            borderRadius: 1.5,
+                            bgcolor: 'grey.200',
+                            boxShadow: 1,
+                            mb: 1
+                          }}
+                          onError={(e) => {
+                            console.error('Failed to load snapshot:', spotDetail.spot.mapSnapshotR2Key);
+                            e.target.style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <Box
+                          sx={{
+                            width: '100%',
+                            height: 240,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: 1.5,
+                            bgcolor: 'grey.200',
+                            border: '2px dashed',
+                            borderColor: 'grey.400',
+                            mb: 1
+                          }}
+                        >
+                          <Typography variant="body2" color="text.secondary">
+                            No snapshot available
+                          </Typography>
+                        </Box>
+                      )}
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        fullWidth
+                        startIcon={<RefreshCw size={16} />}
+                        onClick={async () => {
+                          try {
+                            setDetailLoading(true);
+                            // Trigger snapshot generation by updating the spot
+                            // The Cloud Function onSpotWrite will detect the change and generate snapshot
+                            await handleSpotAction(selectedSpot.id, "edit", {
+                              name: spotDetail.spot.name,
+                              description: spotDetail.spot.description,
+                              type: spotDetail.spot.type,
+                              region: spotDetail.spot.region
+                            });
+                            alert("Snapshot generation triggered! The page will reload in 30 seconds to show the new snapshot.");
+                            setTimeout(() => {
+                              loadSpotDetail(selectedSpot.id);
+                              setDetailLoading(false);
+                            }, 30000);
+                          } catch (e) {
+                            alert(`Failed to trigger snapshot: ${e.message}`);
+                            setDetailLoading(false);
+                          }
+                        }}
+                      >
+                        {spotDetail.spot.mapSnapshotR2Key ? 'Regenerate Snapshot' : 'Generate Snapshot'}
+                      </Button>
+                    </Box>
+
+                    {/* Spot Images */}
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                        Photos {spotDetail.images && spotDetail.images.length > 0 ? `(${spotDetail.images.length})` : ''}
+                      </Typography>
+                      {spotDetail.images && spotDetail.images.length > 0 ? (
+                        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 1.5 }}>
+                          {spotDetail.images.map((image, idx) => (
+                            <Box
+                              key={image.id || idx}
+                              sx={{
+                                position: 'relative',
+                                paddingTop: '75%',
+                                borderRadius: 1.5,
+                                overflow: 'hidden',
+                                boxShadow: 1,
+                                border: image.isPrimary ? 3 : 0,
+                                borderColor: 'primary.main'
+                              }}
                             >
-                              <X size={14} />
-                            </IconButton>
-                          </Stack>
-                        </Paper>
-                      ))}
+                              <Box
+                                component="img"
+                                src={image.r2Key ? `https://cruisapalooza.com/${image.r2Key}` : image.url}
+                                alt={`Spot image ${idx + 1}`}
+                                sx={{
+                                  position: 'absolute',
+                                  top: 0,
+                                  left: 0,
+                                  width: '100%',
+                                  height: '100%',
+                                  objectFit: 'cover',
+                                  bgcolor: 'grey.200'
+                                }}
+                                onError={(e) => {
+                                  console.error('Failed to load image:', image);
+                                  e.target.style.display = 'none';
+                                }}
+                              />
+                              {image.isPrimary && (
+                                <Chip
+                                  label="Primary"
+                                  size="small"
+                                  color="primary"
+                                  sx={{
+                                    position: 'absolute',
+                                    top: 8,
+                                    right: 8,
+                                    height: 20,
+                                    fontSize: '0.7rem'
+                                  }}
+                                />
+                              )}
+                            </Box>
+                          ))}
+                        </Box>
+                      ) : (
+                        <Box
+                          sx={{
+                            width: '100%',
+                            height: 120,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: 1.5,
+                            bgcolor: 'grey.200',
+                            border: '2px dashed',
+                            borderColor: 'grey.400'
+                          }}
+                        >
+                          <Typography variant="body2" color="text.secondary">
+                            No photos available
+                          </Typography>
+                        </Box>
+                      )}
+                    </Box>
+                  </Paper>
+
+                  {/* Basic Info Section */}
+                  <Paper elevation={0} sx={{ p: 2.5, bgcolor: 'grey.50', border: 1, borderColor: 'divider' }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                      Basic Information
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <TextField
+                        label="Name"
+                        value={editForm.name !== undefined ? editForm.name : (spotDetail.spot.name || "")}
+                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                        size="small"
+                        variant="outlined"
+                        sx={{
+                          '& .MuiOutlinedInput-root': {
+                            backgroundColor: 'white',
+                            minHeight: 40
+                          }
+                        }}
+                      />
+
+                      <FormControl size="small" variant="outlined">
+                        <InputLabel>Type</InputLabel>
+                        <Select
+                          value={editForm.type !== undefined ? editForm.type : (spotDetail.spot.type || "")}
+                          onChange={(e) => setEditForm({ ...editForm, type: e.target.value })}
+                          label="Type"
+                        >
+                          {SPOT_TYPES.map(type => (
+                            <MenuItem key={type} value={type}>{type}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+
+                      <TextField
+                        label="Description"
+                        value={editForm.description !== undefined ? editForm.description : (spotDetail.spot.description || "")}
+                        onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                        multiline
+                        rows={4}
+                        size="small"
+                        variant="outlined"
+                        sx={{
+                          '& .MuiOutlinedInput-root': {
+                            backgroundColor: 'white',
+                            minHeight: 100
+                          }
+                        }}
+                      />
+                    </Box>
+                  </Paper>
+
+                  {/* Location Section */}
+                  <Paper elevation={0} sx={{ p: 2.5, bgcolor: 'grey.50', border: 1, borderColor: 'divider' }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                      Location
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                        <TextField
+                          label="Latitude"
+                          value={editForm.latitude !== undefined ? editForm.latitude : (spotDetail.spot.latitude || "")}
+                          onChange={(e) => setEditForm({ ...editForm, latitude: parseFloat(e.target.value) })}
+                          type="number"
+                          inputProps={{ step: 0.000001 }}
+                          size="small"
+                          variant="outlined"
+                          sx={{
+                            '& .MuiOutlinedInput-root': {
+                              backgroundColor: 'white',
+                              minHeight: 40
+                            }
+                          }}
+                        />
+                        <TextField
+                          label="Longitude"
+                          value={editForm.longitude !== undefined ? editForm.longitude : (spotDetail.spot.longitude || "")}
+                          onChange={(e) => setEditForm({ ...editForm, longitude: parseFloat(e.target.value) })}
+                          type="number"
+                          inputProps={{ step: 0.000001 }}
+                          size="small"
+                          variant="outlined"
+                          sx={{
+                            '& .MuiOutlinedInput-root': {
+                              backgroundColor: 'white',
+                              minHeight: 40
+                            }
+                          }}
+                        />
+                      </Box>
+                      <FormControl size="small" variant="outlined">
+                        <InputLabel>Region</InputLabel>
+                        <Select
+                          value={editForm.region !== undefined ? editForm.region : (spotDetail.spot.region || "")}
+                          onChange={(e) => setEditForm({ ...editForm, region: e.target.value })}
+                          label="Region"
+                        >
+                          <MenuItem value="">None</MenuItem>
+                          {VALID_REGIONS.map(region => (
+                            <MenuItem key={region} value={region}>{region}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Box>
+                  </Paper>
+
+                  {/* Metadata Section */}
+                  <Paper elevation={0} sx={{ p: 2.5, bgcolor: 'grey.50', border: 1, borderColor: 'divider' }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                      Metadata
+                    </Typography>
+                    <Stack spacing={1.5}>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">Spot ID</Typography>
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
+                          {spotDetail.spot.id}
+                        </Typography>
+                      </Box>
+                      {spotDetail.spot.uuid && (
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">UUID</Typography>
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
+                            {spotDetail.spot.uuid}
+                          </Typography>
+                        </Box>
+                      )}
+                      {spotDetail.spot.ownerId && (
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">Owner ID</Typography>
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
+                            {spotDetail.spot.ownerId}
+                          </Typography>
+                        </Box>
+                      )}
+                      <Stack direction="row" spacing={3}>
+                        {spotDetail.spot.createdAt && (
+                          <Box>
+                            <Typography variant="caption" color="text.secondary">Created</Typography>
+                            <Typography variant="body2">{formatDate(spotDetail.spot.createdAt)}</Typography>
+                          </Box>
+                        )}
+                        {spotDetail.spot.updatedAt && (
+                          <Box>
+                            <Typography variant="caption" color="text.secondary">Updated</Typography>
+                            <Typography variant="body2">{formatDate(spotDetail.spot.updatedAt)}</Typography>
+                          </Box>
+                        )}
+                      </Stack>
                     </Stack>
-                  </>
-                )}
-                
-                <Divider sx={{ my: 2 }} />
-                
-                <Typography variant="overline" color="text.secondary">
-                  Actions
-                </Typography>
-                <Stack spacing={1} sx={{ mt: 1 }}>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={() => {
-                      setEditForm({
-                        name: selectedSpot.name,
-                        description: selectedSpot.description || "",
-                        type: selectedSpot.type,
-                        region: selectedSpot.region || "",
-                        verified: selectedSpot.verified || false,
-                      });
-                      setEditDialogOpen(true);
-                    }}
-                  >
-                    Edit
-                  </Button>
-                  
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={() =>
-                      handleSpotAction(
-                        selectedSpot.id,
-                        selectedSpot.verified ? "unverify" : "verify"
-                      )
-                    }
-                  >
-                    {selectedSpot.verified ? "Unverify" : "Verify"}
-                  </Button>
-                  
-                  {!selectedSpot.deleted ? (
-                    <Button
-                      variant="outlined"
-                      color="error"
-                      size="small"
-                      onClick={() => handleSpotAction(selectedSpot.id, "softDelete")}
-                    >
-                      Soft Delete
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="outlined"
-                      color="success"
-                      size="small"
-                      onClick={() => handleSpotAction(selectedSpot.id, "restore")}
-                    >
-                      Restore
-                    </Button>
+                  </Paper>
+
+                  {/* Rating & Comments Section */}
+                  {(spotDetail.ratingSummary.count > 0 || (spotDetail.comments && spotDetail.comments.length > 0)) && (
+                    <Paper elevation={0} sx={{ p: 2.5, bgcolor: 'grey.50', border: 1, borderColor: 'divider' }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                        User Feedback
+                      </Typography>
+                      
+                      {/* Rating */}
+                      <Box sx={{ mb: spotDetail.comments?.length > 0 ? 2 : 0 }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                          Rating
+                        </Typography>
+                        <Typography variant="body2">
+                          {spotDetail.ratingSummary.average
+                            ? `⭐ ${spotDetail.ratingSummary.average.toFixed(1)} (${spotDetail.ratingSummary.count} ${spotDetail.ratingSummary.count === 1 ? 'rating' : 'ratings'})`
+                            : "No ratings yet"}
+                        </Typography>
+                      </Box>
+
+                      {/* Comments */}
+                      {spotDetail.comments && spotDetail.comments.length > 0 && (
+                        <Box>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                            Comments ({spotDetail.comments.length})
+                          </Typography>
+                          <Stack spacing={1}>
+                            {spotDetail.comments.slice(0, 5).map(comment => (
+                              <Paper key={comment.id} variant="outlined" sx={{ p: 1.5, bgcolor: 'white' }}>
+                                <Stack direction="row" spacing={1} alignItems="flex-start">
+                                  <Box sx={{ flexGrow: 1 }}>
+                                    <Typography variant="body2" sx={{ mb: 0.5 }}>
+                                      {comment.text}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary">
+                                      {comment.userName} • {formatDate(comment.createdAt)}
+                                    </Typography>
+                                  </Box>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => handleModerateComment(comment.id, "delete")}
+                                  >
+                                    <X size={14} />
+                                  </IconButton>
+                                </Stack>
+                              </Paper>
+                            ))}
+                            {spotDetail.comments.length > 5 && (
+                              <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center', pt: 0.5 }}>
+                                + {spotDetail.comments.length - 5} more comments
+                              </Typography>
+                            )}
+                          </Stack>
+                        </Box>
+                      )}
+                    </Paper>
                   )}
+
+                  {/* Action Buttons */}
+                  <Stack spacing={1.5} sx={{ pt: 1 }}>
+                    <Button
+                      variant="contained"
+                      size="large"
+                      onClick={async () => {
+                        try {
+                          await handleSpotAction(selectedSpot.id, "update", {
+                            name: editForm.name !== undefined ? editForm.name : spotDetail.spot.name,
+                            description: editForm.description !== undefined ? editForm.description : spotDetail.spot.description,
+                            type: editForm.type !== undefined ? editForm.type : spotDetail.spot.type,
+                            region: editForm.region !== undefined ? editForm.region : spotDetail.spot.region,
+                            latitude: editForm.latitude !== undefined ? editForm.latitude : spotDetail.spot.latitude,
+                            longitude: editForm.longitude !== undefined ? editForm.longitude : spotDetail.spot.longitude,
+                          });
+                          setEditForm({});
+                          alert("Spot updated successfully");
+                        } catch (e) {
+                          alert(`Failed to update: ${e.message}`);
+                        }
+                      }}
+                      disabled={Object.keys(editForm).length === 0}
+                    >
+                      Save Changes
+                    </Button>
+                    
+                    <Stack direction="row" spacing={1}>
+                      <Button
+                        variant="outlined"
+                        size="medium"
+                        fullWidth
+                        onClick={() =>
+                          handleSpotAction(
+                            selectedSpot.id,
+                            selectedSpot.verified ? "unverify" : "verify"
+                          )
+                        }
+                      >
+                        {selectedSpot.verified ? "Unverify" : "Verify"}
+                      </Button>
+                      
+                      {!selectedSpot.deleted ? (
+                        <Button
+                          variant="outlined"
+                          color="error"
+                          size="medium"
+                          fullWidth
+                          onClick={() => handleSpotAction(selectedSpot.id, "softDelete")}
+                        >
+                          Delete
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outlined"
+                          color="success"
+                          size="medium"
+                          fullWidth
+                          onClick={() => handleSpotAction(selectedSpot.id, "restore")}
+                        >
+                          Restore
+                        </Button>
+                      )}
+                    </Stack>
+                  </Stack>
                 </Stack>
-              </>
+              </Box>
             ) : null}
           </Box>
         )}
@@ -1699,6 +2164,81 @@ function Spots() {
               Run Migration ({migrateResult.migrated} spots)
             </Button>
           )}
+        </DialogActions>
+      </Dialog>
+      
+      {/* Bulk Snapshot Generation Dialog */}
+      <Dialog
+        open={snapshotDialogOpen}
+        onClose={() => !snapshotProgress.isProcessing && setSnapshotDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          Bulk Snapshot Generation
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="body2" color="text.secondary" gutterBottom>
+              Spots without snapshots: {snapshotProgress.total}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" gutterBottom>
+              Processed: {snapshotProgress.processed} / {snapshotProgress.total}
+            </Typography>
+            <Typography variant="body2" color="success.main" gutterBottom>
+              Successful: {snapshotProgress.successful}
+            </Typography>
+            <Typography variant="body2" color="error.main" gutterBottom>
+              Failed: {snapshotProgress.failed}
+            </Typography>
+          </Box>
+          
+          <LinearProgress 
+            variant="determinate" 
+            value={snapshotProgress.total > 0 ? (snapshotProgress.processed / snapshotProgress.total) * 100 : 0}
+            sx={{ mb: 2 }}
+          />
+          
+          {snapshotProgress.errors.length > 0 && (
+            <Box sx={{ mt: 2, maxHeight: 200, overflowY: 'auto' }}>
+              <Typography variant="subtitle2" color="error" gutterBottom>
+                Errors:
+              </Typography>
+              {snapshotProgress.errors.map((err, idx) => (
+                <Typography key={idx} variant="caption" display="block" color="text.secondary">
+                  {err.spotName || err.spotId}: {err.error}
+                </Typography>
+              ))}
+            </Box>
+          )}
+          
+          {!snapshotProgress.isProcessing && snapshotProgress.processed > 0 && (
+            <Alert severity="success" sx={{ mt: 2 }}>
+              Snapshot generation complete! {snapshotProgress.successful} successful, {snapshotProgress.failed} failed.
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          {snapshotProgress.isProcessing && (
+            <Button 
+              onClick={() => {
+                setSnapshotProgress(prev => ({ ...prev, cancelRequested: true }));
+              }}
+              color="error"
+              disabled={snapshotProgress.cancelRequested}
+            >
+              {snapshotProgress.cancelRequested ? 'Cancelling...' : 'Cancel'}
+            </Button>
+          )}
+          <Button 
+            onClick={() => {
+              setSnapshotDialogOpen(false);
+              loadSpots();
+            }}
+            disabled={snapshotProgress.isProcessing}
+          >
+            Close
+          </Button>
         </DialogActions>
       </Dialog>
     </React.Fragment>

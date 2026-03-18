@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useContext, useEffect, useRef, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import {
   Box,
@@ -16,11 +16,8 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import { fetchAisStats } from "@/services/aisStats";
 import firebase from "firebase/app";
 import "firebase/database";
-import { firebaseConfig } from "@/config";
+import { AuthContext } from "@/contexts/FirebaseAuthContext";
 
-if (!firebase.apps.length) {
-  firebase.initializeApp(firebaseConfig);
-}
 const rtdb = firebase.database();
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
@@ -228,6 +225,7 @@ function Legend() {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 function AIS() {
+  const { isAuthenticated, isInitialized } = useContext(AuthContext);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState(null);
@@ -269,11 +267,45 @@ function AIS() {
 
   const toggleFeed = async () => {
     if (feedToggling || feedEnabled === null) return;
+    
+    // Check authentication
+    if (!isAuthenticated) {
+      alert('You must be signed in to control the AIS feed. Please sign in and try again.');
+      return;
+    }
+    
+    const newValue = !feedEnabled;
     setFeedToggling(true);
+    
     try {
-      await rtdb.ref("ais_config/enabled").set(!feedEnabled);
+      // Set with timeout to ensure it completes on mobile
+      await Promise.race([
+        rtdb.ref("ais_config/enabled").set(newValue),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("Timeout")), 10000)
+        )
+      ]);
+      console.log(`[AIS feed] Successfully set to ${newValue}`);
     } catch (e) {
-      console.error("[AIS feed toggle]", e);
+      console.error("[AIS feed toggle] Error:", e);
+      
+      // Check if it's a permission error
+      if (e.code === 'PERMISSION_DENIED') {
+        alert('Permission denied. Please ensure you are signed in with an authorized account.');
+      } else {
+        // Retry once on mobile
+        try {
+          await rtdb.ref("ais_config/enabled").set(newValue);
+          console.log(`[AIS feed] Retry successful, set to ${newValue}`);
+        } catch (retryError) {
+          console.error("[AIS feed toggle] Retry failed:", retryError);
+          if (retryError.code === 'PERMISSION_DENIED') {
+            alert('Permission denied. Please ensure you are signed in with an authorized account.');
+          } else {
+            alert(`Failed to ${newValue ? 'start' : 'stop'} AIS feed. Please check your connection and try again.`);
+          }
+        }
+      }
     } finally {
       setFeedToggling(false);
     }
@@ -310,17 +342,22 @@ function AIS() {
           )}
         </Box>
 
-        <Tooltip title={feedEnabled === null ? "Loading feed status..." : feedEnabled ? "Stop AIS feed ingestion" : "Start AIS feed ingestion"}>
+        <Tooltip title={
+          !isInitialized ? "Loading..." :
+          !isAuthenticated ? "Sign in required to control AIS feed" :
+          feedEnabled === null ? "Loading feed status..." : 
+          feedEnabled ? "Stop AIS feed ingestion" : "Start AIS feed ingestion"
+        }>
           <span>
             <Button
               variant="contained"
               color={feedEnabled ? "error" : "success"}
-              disabled={feedEnabled === null || feedToggling}
+              disabled={!isInitialized || !isAuthenticated || feedEnabled === null || feedToggling}
               startIcon={feedToggling ? <CircularProgress size={16} color="inherit" /> : feedEnabled ? <Square size={16} /> : <Play size={16} />}
               onClick={toggleFeed}
               sx={{ minWidth: 160, fontWeight: 600 }}
             >
-              {feedEnabled === null
+              {!isInitialized || feedEnabled === null
                 ? "Loading..."
                 : feedEnabled
                 ? "Stop AIS Feed"

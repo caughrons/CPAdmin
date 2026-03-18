@@ -101,6 +101,94 @@ export async function syncCurrentMonth() {
 }
 
 /**
+ * Fetch OpenAI spend data for a specific month
+ */
+export async function fetchOpenAISpend(year, month) {
+  try {
+    const docId = `${year}-${month.toString().padStart(2, "0")}-openai_all`;
+    const doc = await firestore.collection("financial_data").doc(docId).get();
+
+    if (!doc.exists) {
+      return null;
+    }
+
+    return doc.data();
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
+ * Fetch OpenAI spend data for a range of months
+ */
+export async function fetchOpenAISpendRange(months = 12) {
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setMonth(endDate.getMonth() - months + 1);
+  startDate.setDate(1);
+
+  const data = [];
+  const current = new Date(startDate);
+
+  while (current <= endDate) {
+    const year = current.getFullYear();
+    const month = current.getMonth() + 1;
+    const monthData = await fetchOpenAISpend(year, month);
+
+    data.push({
+      year,
+      month,
+      totalUsd: monthData?.totalUsd || 0,
+      cached: monthData ? true : false,
+    });
+
+    current.setMonth(current.getMonth() + 1);
+  }
+
+  return data;
+}
+
+/**
+ * Sync historical OpenAI spend data (last 3 months)
+ */
+export async function syncHistoricalOpenAISpend() {
+  console.log("🔵 Calling getOpenAISpend Cloud Function...");
+  
+  const callable = functions.httpsCallable("getOpenAISpend", {
+    timeout: 300000, // 5 minutes for backfill
+  });
+
+  try {
+    const result = await callable({
+      backfillMonths: 3,
+      forceRefresh: true,
+    });
+
+    console.log("✅ OpenAI Cloud Function response:", result.data);
+    return result.data;
+  } catch (error) {
+    console.error("❌ OpenAI Cloud Function error:", error);
+    throw error;
+  }
+}
+
+/**
+ * Sync current month OpenAI spend data
+ */
+export async function syncCurrentMonthOpenAI() {
+  const now = new Date();
+  const callable = functions.httpsCallable("getOpenAISpend");
+
+  const result = await callable({
+    year: now.getFullYear(),
+    month: now.getMonth() + 1,
+    forceRefresh: true,
+  });
+
+  return result.data;
+}
+
+/**
  * Get financial data for any category and time range
  * Generic function for future expansion to other categories
  */

@@ -14,7 +14,12 @@ import {
   calculateAggregates,
   getMonthLabels,
 } from "@/utils/mockFinancialData";
-import { fetchClaudeSpendRange } from "@/services/financialsService";
+import { 
+  fetchClaudeSpendRange, 
+  fetchOpenAISpendRange,
+  syncCurrentMonth,
+  syncCurrentMonthOpenAI
+} from "@/services/financialsService";
 
 const Divider = styled(MuiDivider)(spacing);
 
@@ -24,6 +29,7 @@ function Financials() {
   const mockData = useMemo(() => generateMockFinancialData(), []);
   
   const [claudeSpendData, setClaudeSpendData] = useState(null);
+  const [openAISpendData, setOpenAISpendData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -32,6 +38,9 @@ function Financials() {
       setLoading(true);
       setError(null);
       const data = await fetchClaudeSpendRange(12);
+      
+      console.log("🔵 [Expenses] Raw Claude spend data from Firestore:", data);
+      console.log("🔵 [Expenses] Current date:", new Date().toISOString());
       
       // Check if we got any real data
       const hasRealData = data && data.some(d => d.totalUsd > 0);
@@ -49,61 +58,115 @@ function Financials() {
     }
   };
 
+  const loadOpenAISpend = async () => {
+    try {
+      const data = await fetchOpenAISpendRange(12);
+      setOpenAISpendData(data);
+    } catch (err) {
+      console.error("Failed to load OpenAI spend data:", err);
+    }
+  };
+
   useEffect(() => {
-    loadClaudeSpend();
+    const initializeData = async () => {
+      // First, sync current month data from APIs
+      try {
+        console.log("🔵 Auto-syncing current month data...");
+        await Promise.all([
+          syncCurrentMonth(),
+          syncCurrentMonthOpenAI()
+        ]);
+        console.log("✅ Current month data synced");
+      } catch (err) {
+        console.error("⚠️ Failed to sync current month data:", err);
+        // Continue loading cached data even if sync fails
+      }
+      
+      // Then load all data from Firestore (including newly synced current month)
+      await Promise.all([
+        loadClaudeSpend(),
+        loadOpenAISpend()
+      ]);
+    };
+    
+    initializeData();
   }, []);
 
-  // Merge real Claude data with mock data
+  const handleSyncComplete = () => {
+    loadClaudeSpend();
+    loadOpenAISpend();
+  };
+
+  // Merge real Claude and OpenAI data with mock data
   const mergedData = useMemo(() => {
-    if (!claudeSpendData) return mockData;
+    if (!claudeSpendData && !openAISpendData) return mockData;
     
     console.log("🔵 Claude spend data:", claudeSpendData);
-    const monthlyData = claudeSpendData.map(d => d.totalUsd);
-    const currentMonth = claudeSpendData[claudeSpendData.length - 1]?.totalUsd || 0;
-    console.log("🔵 Monthly data:", monthlyData);
-    console.log("🔵 Current month:", currentMonth);
+    console.log("🔵 OpenAI spend data:", openAISpendData);
+    
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1; // 1-12
+    
+    const claudeMonthlyData = claudeSpendData ? claudeSpendData.map(d => d.totalUsd) : Array(12).fill(0);
+    // Find the current month in the data array
+    const claudeCurrentMonthData = claudeSpendData ? claudeSpendData.find(d => d.year === currentYear && d.month === currentMonth) : null;
+    const claudeCurrentMonth = claudeCurrentMonthData?.totalUsd || 0;
+    
+    const openaiMonthlyData = openAISpendData ? openAISpendData.map(d => d.totalUsd) : Array(12).fill(0);
+    const openaiCurrentMonthData = openAISpendData ? openAISpendData.find(d => d.year === currentYear && d.month === currentMonth) : null;
+    const openaiCurrentMonth = openaiCurrentMonthData?.totalUsd || 0;
+    
+    console.log("🔵 Current year/month:", currentYear, currentMonth);
+    console.log("🔵 Claude monthly data:", claudeMonthlyData);
+    console.log("🔵 Claude current month data:", claudeCurrentMonthData);
+    console.log("🔵 Claude current month:", claudeCurrentMonth);
+    console.log("🔵 OpenAI monthly data:", openaiMonthlyData);
+    console.log("🔵 OpenAI current month:", openaiCurrentMonth);
     
     return {
       ...mockData,
       expenses: {
         ...mockData.expenses,
         claudeCruisNews: {
-          monthlyData,
-          currentMonth,
+          monthlyData: claudeMonthlyData,
+          currentMonth: claudeCurrentMonth,
+        },
+        chatGPTImageCreation: {
+          monthlyData: openaiMonthlyData,
+          currentMonth: openaiCurrentMonth,
         },
       },
     };
-  }, [mockData, claudeSpendData]);
-
-  const aggregates = useMemo(() => calculateAggregates(mergedData), [mergedData]);
+  }, [mockData, claudeSpendData, openAISpendData]);
 
   const expenseCategories = [
     {
       key: "firebaseRTDB",
       name: "Firebase RTDB Spend",
-      data: mockData.expenses.firebaseRTDB.monthlyData,
-      currentMonthValue: mockData.expenses.firebaseRTDB.currentMonth,
+      data: Array(12).fill(0),
+      currentMonthValue: 0,
       color: theme.palette.error.main,
     },
     {
       key: "firebaseFirestore",
       name: "Firebase Firestore Spend",
-      data: mockData.expenses.firebaseFirestore.monthlyData,
-      currentMonthValue: mockData.expenses.firebaseFirestore.currentMonth,
+      data: Array(12).fill(0),
+      currentMonthValue: 0,
       color: theme.palette.error.main,
     },
     {
       key: "cloudflareR2",
       name: "Cloudflare R2 Spend",
-      data: mockData.expenses.cloudflareR2.monthlyData,
-      currentMonthValue: mockData.expenses.cloudflareR2.currentMonth,
+      data: Array(12).fill(0),
+      currentMonthValue: 0,
       color: theme.palette.error.main,
     },
     {
       key: "firebaseHosting",
       name: "Firebase Hosting Spend",
-      data: mockData.expenses.firebaseHosting.monthlyData,
-      currentMonthValue: mockData.expenses.firebaseHosting.currentMonth,
+      data: Array(12).fill(0),
+      currentMonthValue: 0,
       color: theme.palette.error.main,
     },
     {
@@ -115,16 +178,30 @@ function Financials() {
     },
     {
       key: "chatGPTImageCreation",
-      name: "ChatGPT Image Creation Spend",
+      name: "OpenAI API Spend (Image Creation)",
       data: mergedData.expenses.chatGPTImageCreation.monthlyData,
       currentMonthValue: mergedData.expenses.chatGPTImageCreation.currentMonth,
       color: theme.palette.error.main,
     },
     {
+      key: "mapboxUsage",
+      name: "Mapbox Usage Spend",
+      data: Array(12).fill(0),
+      currentMonthValue: 0,
+      color: theme.palette.error.main,
+    },
+    {
+      key: "mapboxStaticSnapshot",
+      name: "Mapbox Static Snapshot Spend",
+      data: Array(12).fill(0),
+      currentMonthValue: 0,
+      color: theme.palette.error.main,
+    },
+    {
       key: "windsurfDevelopment",
       name: "Windsurf Development Spend",
-      data: mergedData.expenses.windsurfDevelopment.monthlyData,
-      currentMonthValue: mergedData.expenses.windsurfDevelopment.currentMonth,
+      data: Array(12).fill(0),
+      currentMonthValue: 0,
       color: theme.palette.error.main,
     },
   ];
@@ -133,25 +210,55 @@ function Financials() {
     {
       key: "adMobAds",
       name: "AdMob Ads Revenue",
-      data: mockData.revenue.adMobAds.monthlyData,
-      currentMonthValue: mockData.revenue.adMobAds.currentMonth,
+      data: Array(12).fill(0),
+      currentMonthValue: 0,
       color: theme.palette.success.main,
     },
     {
       key: "sponsorship",
       name: "Sponsorship Revenue",
-      data: mockData.revenue.sponsorship.monthlyData,
-      currentMonthValue: mockData.revenue.sponsorship.currentMonth,
+      data: Array(12).fill(0),
+      currentMonthValue: 0,
       color: theme.palette.success.main,
     },
     {
       key: "merchandise",
       name: "Merchandise Revenue",
-      data: mockData.revenue.merchandise.monthlyData,
-      currentMonthValue: mockData.revenue.merchandise.currentMonth,
+      data: Array(12).fill(0),
+      currentMonthValue: 0,
       color: theme.palette.success.main,
     },
   ];
+
+  // Calculate aggregates from actual category data
+  const aggregates = useMemo(() => {
+    const monthlyExpenses = [];
+    const monthlyRevenue = [];
+    
+    // Calculate totals for each month
+    for (let i = 0; i < 12; i++) {
+      let expenseTotal = 0;
+      let revenueTotal = 0;
+      
+      // Sum all expenses for this month
+      expenseCategories.forEach(category => {
+        expenseTotal += category.data[i] || 0;
+      });
+      
+      // Sum all revenue for this month
+      revenueCategories.forEach(category => {
+        revenueTotal += category.data[i] || 0;
+      });
+      
+      monthlyExpenses.push(Math.round(expenseTotal * 100) / 100);
+      monthlyRevenue.push(Math.round(revenueTotal * 100) / 100);
+    }
+    
+    return {
+      expenses: monthlyExpenses,
+      revenue: monthlyRevenue
+    };
+  }, [claudeSpendData, openAISpendData]);
 
   return (
     <React.Fragment>
@@ -167,7 +274,7 @@ function Financials() {
       <Divider my={6} />
 
       {/* Data Management Controls */}
-      <SyncControls onSyncComplete={loadClaudeSpend} />
+      <SyncControls onSyncComplete={handleSyncComplete} />
 
       <Divider my={6} />
 

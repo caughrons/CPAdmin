@@ -83,3 +83,7 @@ export async function bulkGenerateSnapshots() {
 export async function processSnapshotBatch(spotId) {
   return callFunction('processSnapshotBatch', { spotId });
 }
+
+export async function cleanupOldPngSnapshots() {
+  return callFunction('cleanupOldPngSnapshots', {});
+}

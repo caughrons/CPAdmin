@@ -56,6 +56,7 @@ import {
   migrateSpotSchema,
   bulkGenerateSnapshots,
   processSnapshotBatch,
+  cleanupOldPngSnapshots,
 } from "@/services/spotsAdmin";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -245,6 +246,10 @@ function Spots() {
     isProcessing: false,
     cancelRequested: false
   });
+  
+  // Cleanup PNG snapshots state
+  const [cleanupLoading, setCleanupLoading] = useState(false);
+  const [cleanupResult, setCleanupResult] = useState(null);
 
   // ── Load spots ─────────────────────────────────────────────────────────────
   
@@ -532,6 +537,25 @@ function Spots() {
     } catch (error) {
       alert(`Failed to start snapshot generation: ${error.message}`);
       setSnapshotProgress(prev => ({ ...prev, isProcessing: false, cancelRequested: false }));
+    }
+  };
+  
+  const handleCleanupPngSnapshots = async () => {
+    if (!confirm('This will delete all old PNG snapshot files from R2 storage. Continue?')) {
+      return;
+    }
+    
+    setCleanupLoading(true);
+    setCleanupResult(null);
+    
+    try {
+      const result = await cleanupOldPngSnapshots();
+      setCleanupResult(result);
+      alert(`Cleanup complete!\nDeleted: ${result.deleted}\nFailed: ${result.failed}\nTotal found: ${result.totalFound}`);
+    } catch (error) {
+      alert(`Cleanup failed: ${error.message}`);
+    } finally {
+      setCleanupLoading(false);
     }
   };
   
@@ -1185,6 +1209,16 @@ function Spots() {
                 sx={{ mr: 1 }}
               >
                 Create Snapshots
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="error"
+                onClick={handleCleanupPngSnapshots}
+                disabled={cleanupLoading}
+                sx={{ mr: 1 }}
+              >
+                {cleanupLoading ? 'Cleaning...' : 'Cleanup Old PNGs'}
               </Button>
             </Box>
           </Box>

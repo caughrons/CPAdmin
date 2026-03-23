@@ -57,6 +57,10 @@ import {
   bulkGenerateSnapshots,
   processSnapshotBatch,
   cleanupOldPngSnapshots,
+  analyzeR2Storage,
+  quickStorageStats,
+  processCruisnewsImages,
+  deleteCruisnewsPngs,
 } from "@/services/spotsAdmin";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -250,6 +254,13 @@ function Spots() {
   // Cleanup PNG snapshots state
   const [cleanupLoading, setCleanupLoading] = useState(false);
   const [cleanupResult, setCleanupResult] = useState(null);
+  
+  // Storage analysis state
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState(null);
+  const [quickStatsLoading, setQuickStatsLoading] = useState(false);
+  const [processCruisnewsLoading, setProcessCruisnewsLoading] = useState(false);
+  const [deletePngsLoading, setDeletePngsLoading] = useState(false);
 
   // ── Load spots ─────────────────────────────────────────────────────────────
   
@@ -556,6 +567,189 @@ function Spots() {
       alert(`Cleanup failed: ${error.message}`);
     } finally {
       setCleanupLoading(false);
+    }
+  };
+  
+  const handleAnalyzeStorage = async () => {
+    setAnalysisLoading(true);
+    setAnalysisResult(null);
+    
+    try {
+      const result = await analyzeR2Storage();
+      setAnalysisResult(result);
+      
+      // Log full results to console for detailed analysis
+      console.log('=== R2 STORAGE ANALYSIS ===');
+      console.log('Total Files:', result.totalFiles);
+      console.log('Total Size:', result.totalSizeFormatted);
+      console.log('\n=== BY CATEGORY ===');
+      
+      // Create a summary for the alert
+      let summary = `Storage Analysis Complete!\n\n`;
+      summary += `Total Files: ${result.totalFiles}\n`;
+      summary += `Total Size: ${result.totalSizeFormatted}\n\n`;
+      summary += `Top Categories:\n`;
+      
+      // Sort categories by size and show top 5
+      const sortedCategories = Object.entries(result.byCategory)
+        .sort(([,a], [,b]) => b.size - a.size)
+        .slice(0, 5);
+      
+      sortedCategories.forEach(([category, stats]) => {
+        summary += `${category}: ${stats.count} files, ${stats.sizeFormatted}\n`;
+        console.log(`${category}:`);
+        console.log(`  Files: ${stats.count}`);
+        console.log(`  Size: ${stats.sizeFormatted}`);
+        console.log(`  Extensions:`, stats.byExtension);
+      });
+      
+      console.log('\n=== LARGEST FILES ===');
+      console.table(result.largestFiles.slice(0, 20));
+      
+      console.log('\n=== FULL RESULTS ===');
+      console.log(JSON.stringify(result, null, 2));
+      
+      alert(summary + '\n\nFull details logged to console (F12 → Console)');
+    } catch (error) {
+      console.error('Analysis failed:', error);
+      alert(`Analysis failed: ${error.message}\n\nCheck console for details.`);
+    } finally {
+      setAnalysisLoading(false);
+    }
+  };
+  
+  const handleQuickStats = async () => {
+    setQuickStatsLoading(true);
+    
+    try {
+      const result = await quickStorageStats();
+      
+      console.log('=== QUICK STORAGE STATS ===');
+      console.log('Total Files:', result.totalFiles);
+      console.log('Total Size:', result.totalSizeFormatted);
+      console.log('\n=== BY CATEGORY ===');
+      
+      let summary = `Quick Storage Stats:\n\n`;
+      summary += `Total Files: ${result.totalFiles}\n`;
+      summary += `Total Size: ${result.totalSizeFormatted}\n\n`;
+      summary += `Categories:\n`;
+      
+      Object.entries(result.categories).forEach(([category, stats]) => {
+        summary += `${category}: ${stats.count} files, ${stats.sizeFormatted}\n`;
+        console.log(`${category}:`, stats);
+      });
+      
+      console.log('\n=== FULL RESULT ===');
+      console.log(JSON.stringify(result, null, 2));
+      
+      alert(summary + '\n\nFull details logged to console (F12 → Console)');
+    } catch (error) {
+      console.error('Quick stats failed:', error);
+      alert(`Quick stats failed: ${error.message}\n\nCheck console for details.`);
+    } finally {
+      setQuickStatsLoading(false);
+    }
+  };
+  
+  const handleProcessCruisnewsImages = async (dryRun = false) => {
+    const action = dryRun ? 'Dry run' : 'Process';
+    const confirmMessage = dryRun 
+      ? 'This will analyze CruisNews images without making changes. Continue?'
+      : 'This will convert all CruisNews PNG images to optimized WebP format. This action cannot be undone. Continue?';
+      
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+    
+    setProcessCruisnewsLoading(true);
+    
+    try {
+      const result = await processCruisnewsImages({ dryRun, batchSize: 10 });
+      
+      console.log(`=== CRUISNEWS IMAGE PROCESSING (${action.toUpperCase()}) ===`);
+      console.log('Result:', result);
+      
+      let message = `${action} Complete!\n\n`;
+      message += `Total PNG images found: ${result.totalFound}\n`;
+      message += `Processed: ${result.processed}\n`;
+      message += `Skipped: ${result.skipped}\n`;
+      message += `Failed: ${result.failed}\n`;
+      
+      if (result.spaceSaved > 0) {
+        message += `Space saved: ${result.spaceSavedFormatted}\n`;
+      }
+      
+      if (result.errors.length > 0) {
+        message += `\nErrors (first 5):\n`;
+        result.errors.slice(0, 5).forEach(error => {
+          message += `- ${error}\n`;
+        });
+        if (result.errors.length > 5) {
+          message += `... and ${result.errors.length - 5} more errors (check console)`;
+        }
+      }
+      
+      if (!dryRun && result.processed > 0) {
+        message += `\n✅ ${result.processed} images converted to WebP format!`;
+      }
+      
+      alert(message + '\n\nFull details logged to console (F12 → Console)');
+    } catch (error) {
+      console.error(`${action} failed:`, error);
+      alert(`${action} failed: ${error.message}\n\nCheck console for details.`);
+    } finally {
+      setProcessCruisnewsLoading(false);
+    }
+  };
+  
+  const handleDeleteCruisnewsPngs = async (dryRun = false) => {
+    const action = dryRun ? 'Dry run' : 'Delete';
+    const confirmMessage = dryRun 
+      ? 'This will analyze CruisNews PNG images for deletion without making changes. Continue?'
+      : '⚠️ WARNING: This will permanently delete all CruisNews PNG images from R2 storage. This action cannot be undone. Only run this AFTER confirming WebP conversions are working. Continue?';
+      
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+    
+    setDeletePngsLoading(true);
+    
+    try {
+      const result = await deleteCruisnewsPngs({ dryRun, batchSize: 50 });
+      
+      console.log(`=== CRUISNEWS PNG DELETION (${action.toUpperCase()}) ===`);
+      console.log('Result:', result);
+      
+      let message = `${action} Complete!\n\n`;
+      message += `Total PNG images found: ${result.totalFound}\n`;
+      message += `Deleted: ${result.deleted}\n`;
+      message += `Failed: ${result.failed}\n`;
+      
+      if (result.spaceFreed > 0) {
+        message += `Space freed: ${result.spaceFreedFormatted}\n`;
+      }
+      
+      if (result.errors.length > 0) {
+        message += `\nErrors (first 5):\n`;
+        result.errors.slice(0, 5).forEach(error => {
+          message += `- ${error}\n`;
+        });
+        if (result.errors.length > 5) {
+          message += `... and ${result.errors.length - 5} more errors (check console)`;
+        }
+      }
+      
+      if (!dryRun && result.deleted > 0) {
+        message += `\n🗑️ ${result.deleted} PNG files permanently deleted!`;
+        message += `\n💾 ${result.spaceFreedFormatted} of storage freed!`;
+      }
+      
+      alert(message + '\n\nFull details logged to console (F12 → Console)');
+    } catch (error) {
+      console.error(`${action} failed:`, error);
+      alert(`${action} failed: ${error.message}\n\nCheck console for details.`);
+    } finally {
+      setDeletePngsLoading(false);
     }
   };
   
@@ -1209,6 +1403,66 @@ function Spots() {
                 sx={{ mr: 1 }}
               >
                 Create Snapshots
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="info"
+                onClick={handleQuickStats}
+                disabled={quickStatsLoading}
+                sx={{ mr: 1 }}
+              >
+                {quickStatsLoading ? 'Loading...' : 'Quick Stats'}
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="primary"
+                onClick={handleAnalyzeStorage}
+                disabled={analysisLoading}
+                sx={{ mr: 1 }}
+              >
+                {analysisLoading ? 'Analyzing...' : 'Full Analysis'}
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="warning"
+                onClick={() => handleProcessCruisnewsImages(true)}
+                disabled={processCruisnewsLoading}
+                sx={{ mr: 1 }}
+              >
+                {processCruisnewsLoading ? 'Analyzing...' : 'CruisNews Dry Run'}
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="secondary"
+                onClick={() => handleProcessCruisnewsImages(false)}
+                disabled={processCruisnewsLoading}
+                sx={{ mr: 1 }}
+              >
+                {processCruisnewsLoading ? 'Processing...' : 'Convert CruisNews'}
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="success"
+                onClick={() => handleDeleteCruisnewsPngs(true)}
+                disabled={deletePngsLoading}
+                sx={{ mr: 1 }}
+              >
+                {deletePngsLoading ? 'Analyzing...' : 'PNGs Dry Run'}
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                color="error"
+                onClick={() => handleDeleteCruisnewsPngs(false)}
+                disabled={deletePngsLoading}
+                sx={{ mr: 1 }}
+              >
+                {deletePngsLoading ? 'Deleting...' : 'Delete PNGs ⚠️'}
               </Button>
               <Button
                 size="small"

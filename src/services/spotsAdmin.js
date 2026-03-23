@@ -87,3 +87,19 @@ export async function processSnapshotBatch(spotId) {
 export async function cleanupOldPngSnapshots() {
   return callFunction('cleanupOldPngSnapshots', {});
 }
+
+export async function analyzeR2Storage() {
+  return callFunction('analyzeR2Storage', {});
+}
+
+export async function quickStorageStats() {
+  return callFunction('quickStorageStats', {});
+}
+
+export async function processCruisnewsImages(options = {}) {
+  return callFunction('processCruisnewsImages', options);
+}
+
+export async function deleteCruisnewsPngs(options = {}) {
+  return callFunction('deleteCruisnewsPngs', options);
+}

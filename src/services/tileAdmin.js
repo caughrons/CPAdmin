@@ -11,14 +11,8 @@ const functions = firebase.functions();
 
 async function callFunction(functionName, data = {}) {
   try {
-    // Add cache-busting timestamp to force fresh data
-    const cacheBustingData = {
-      ...data,
-      _cacheBust: Date.now()
-    };
-    
     const callable = functions.httpsCallable(functionName, { timeout: 540000 }); // 540 seconds in milliseconds
-    const result = await callable(cacheBustingData);
+    const result = await callable(data);
     return result.data;
   } catch (error) {
     console.error(`Function ${functionName} error:`, error);
@@ -48,8 +42,4 @@ export async function startProgressiveGeneration(regionId, includeSubRegions = f
 
 export async function getGenerationProgress(sessionId) {
   return callFunction("getGenerationProgress", { sessionId });
-}
-
-export async function repairRegionManifest(regionId) {
-  return callFunction("repairRegionManifest", { regionId });
 }

@@ -18,14 +18,13 @@ import {
   IconButton,
 } from "@mui/material";
 import { DataGrid, GridToolbar } from "@mui/x-data-grid";
-import { Play, RefreshCw, Package, MapPin, Trash } from "lucide-react";
+import { Play, RefreshCw, Package, MapPin } from "lucide-react";
 import {
   generateTilePackage,
   getAvailableTileRegions,
   refreshAllTilePackages,
   startProgressiveGeneration,
   getGenerationProgress,
-  repairRegionManifest,
 } from "@/services/tileAdmin";
 import { 
   REGION_PACKAGES, 
@@ -210,7 +209,6 @@ function TileManagement() {
 
   // Progressive generation state
   const [activeGenerations, setActiveGenerations] = useState({}); // sessionId -> progress data
-  const [refreshTrigger, setRefreshTrigger] = useState(0); // Force grid re-renders
 
   useEffect(() => {
     try {
@@ -347,7 +345,6 @@ function TileManagement() {
               targetName,
               regionId,
               status: "success",
-              tilesGenerated: progress.tilesGenerated,
               message: `Progressive generation completed: ${progress.tilesGenerated} tiles generated`,
             });
 
@@ -466,8 +463,6 @@ function TileManagement() {
       setError(e?.message ?? String(e));
     } finally {
       setLoading(false);
-      // Trigger grid refresh after data loads
-      setRefreshTrigger(prev => prev + 1);
     }
   }, []);
 
@@ -569,53 +564,6 @@ function TileManagement() {
     [appendLog, loadRegions]
   );
 
-  const handleRepairManifest = useCallback(
-    async (regionId, targetName) => {
-      const runningKey = `repair-${regionId}`;
-      setRunning((prev) => ({ ...prev, [runningKey]: true }));
-      setError(null);
-      setSuccess(null);
-      try {
-        appendLog({
-          action: "Repair Manifest",
-          targetScope: "package",
-          targetName,
-          regionId,
-          status: "running",
-          message: "Scanning R2 for existing merged package…",
-        });
-        const result = await repairRegionManifest(regionId);
-        setSuccess(
-          `Manifest repaired for ${targetName}: ${(result.sizeBytes / 1024 / 1024).toFixed(1)} MB, ${result.tileCount.toLocaleString()} tiles`
-        );
-        appendLog({
-          action: "Repair Manifest",
-          targetScope: "package",
-          targetName,
-          regionId,
-          status: "success",
-          tilesGenerated: result.tileCount,
-          message: `Repaired — ${(result.sizeBytes / 1024 / 1024).toFixed(1)} MB, ${result.tileCount.toLocaleString()} tiles, key: ${result.r2Key}`,
-        });
-        await loadRegions();
-      } catch (e) {
-        const message = e?.message ?? String(e);
-        setError(message);
-        appendLog({
-          action: "Repair Manifest",
-          targetScope: "package",
-          targetName,
-          regionId,
-          status: "error",
-          message,
-        });
-      } finally {
-        setRunning((prev) => ({ ...prev, [runningKey]: false }));
-      }
-    },
-    [appendLog, loadRegions]
-  );
-
   const handleUpdateAllRegions = useCallback(async () => {
     const shouldContinue = window.confirm(
       "Update all regions and packages? This queues a full sweep for all region packages."
@@ -660,22 +608,6 @@ function TileManagement() {
       setRunning((prev) => ({ ...prev, updateAll: false }));
     }
   }, [appendLog]);
-
-  const handleClearCache = useCallback(() => {
-    // Clear local storage
-    localStorage.removeItem(LOG_STORAGE_KEY);
-    
-    // Clear activity logs state
-    setActivityLogs([]);
-    
-    // Trigger refresh
-    setRefreshTrigger(prev => prev + 1);
-    
-    // Force refresh regions
-    loadRegions();
-    
-    setSuccess("Cache cleared and data refreshed");
-  }, [loadRegions]);
 
   const latestRunByRegion = useMemo(() => {
     const map = {};
@@ -822,23 +754,12 @@ function TileManagement() {
       } else {
         manifest = data?.manifest;
       }
-
-      // Use progressive generation tile count if available, otherwise use manifest tile count
-      // Find the active generation session for this region
-      const regionGeneration = Object.values(activeGenerations).find(gen => gen.regionId === regionId);
-      const progressiveTileCount = regionGeneration?.tilesGenerated || latestRun?.tilesGenerated;
-      const displayTileCount = progressiveTileCount && progressiveTileCount > 0 ? progressiveTileCount : (manifest?.tileCount ?? 0);
       
       console.log(`📊 [TILE_MGMT] Row data for ${regionId}:`, {
         isPackage,
         data,
         rowParentId,
         manifest,
-        latestRun,
-        regionGeneration,
-        activeGenerationsCount: Object.keys(activeGenerations).length,
-        progressiveTileCount,
-        displayTileCount,
         sizeBytes: manifest?.sizeBytes,
         tileCount: manifest?.tileCount,
         lastUpdated: manifest?.lastUpdated,
@@ -856,8 +777,8 @@ function TileManagement() {
         description: predefinedPkg?.description ?? data?.description ?? "—",
         available: predefinedPkg ? true : (data?.available === true),
         version: predefinedPkg?.version ?? manifest?.version ?? "—",
-        sizeBytes: manifest?.sizeBytes || 0,
-        tileCount: displayTileCount,
+        sizeBytes: predefinedPkg ? (predefinedPkg.estimatedSizeMB * 1024 * 1024) : (manifest?.sizeBytes ?? 0),
+        tileCount: manifest?.tileCount ?? 0,
         lastUpdated: manifest?.lastUpdated ?? null,
         checksum: manifest?.checksum ?? "—",
         lastRunStatus: latestRun?.status ?? "—",
@@ -883,9 +804,6 @@ function TileManagement() {
       pushed.add(regionId);
     };
 
-    // Track which REGION_PACKAGES region names are covered by a backend region row
-    const coveredRegionNames = new Set();
-
     // Push region rows first
     for (const parentId of parentIds) {
       pushRow(parentId, "region", null);
@@ -893,7 +811,6 @@ function TileManagement() {
       // Push predefined packages for this region
       const regionName = toDisplayName(parentId, regions[parentId]);
       const packages = REGION_PACKAGES[regionName] || [];
-      if (packages.length > 0) coveredRegionNames.add(regionName);
       packages.forEach(pkg => {
         pushRow(pkg.id, "package", parentId, pkg);
       });
@@ -905,7 +822,7 @@ function TileManagement() {
           sensitivity: "base",
         })
       );
-
+      
       for (const childId of childIds) {
         if (!predefinedPackages.has(childId)) {
           pushRow(childId, "package", parentId);
@@ -913,48 +830,28 @@ function TileManagement() {
       }
     }
 
-    // Always ensure every REGION_PACKAGES region appears — add synthetic rows for any
-    // region not covered by backend data.
-    for (const [regionName, packages] of Object.entries(REGION_PACKAGES)) {
-      if (coveredRegionNames.has(regionName)) continue;
-
-      const syntheticId = `synthetic_${normalizeRegionKey(regionName)}`;
-      if (!pushed.has(syntheticId)) {
-        rowsBuilt.push({
-          id: syntheticId,
-          regionId: syntheticId,
-          name: regionName,
-          regionName: regionName,
-          packageName: "—",
-          packageId: "—",
-          description: "—",
-          available: false,
-          version: "N/A",
-          sizeBytes: 0,
-          tileCount: 0,
-          lastUpdated: null,
-          checksum: "N/A",
-          lastRunStatus: "N/A",
-          lastRunAt: null,
-          nodeType: "region",
-          parentRegionId: null,
-          hasSubregions: packages.length > 0,
-          packageCount: packages.length,
-          parentName: null,
-          isPredefined: true,
-          isSynthetic: true,
-          seasonalInfo: null,
-          includedAreas: [],
+    // If no backend regions, create regions from predefined packages
+    if (parentIds.length === 0) {
+      const processedRegionNames = new Set();
+      
+      for (const [regionName, packages] of Object.entries(REGION_PACKAGES)) {
+        if (processedRegionNames.has(regionName)) continue;
+        processedRegionNames.add(regionName);
+        
+        // Create a synthetic region ID
+        const syntheticRegionId = regionName.toLowerCase().replace(/\s+/g, '_');
+        
+        // Push the region row
+        pushRow(syntheticRegionId, "region", null);
+        
+        // Push all packages for this region
+        packages.forEach(pkg => {
+          pushRow(pkg.id, "package", syntheticRegionId, pkg);
         });
-        pushed.add(syntheticId);
       }
-
-      packages.forEach(pkg => {
-        pushRow(pkg.id, "package", syntheticId, pkg);
-      });
     }
 
-    // Push any remaining predefined packages not yet in the grid
+    // Push any remaining predefined packages
     for (const [pkgId, pkg] of predefinedPackages) {
       if (!pushed.has(pkgId)) {
         pushRow(pkgId, "package", null, pkg);
@@ -965,7 +862,7 @@ function TileManagement() {
     console.log('📊 [TILE_MGMT] Row sample:', rowsBuilt.slice(0, 3));
     
     return rowsBuilt;
-  }, [latestRunByRegion, regions, activeGenerations]);
+  }, [latestRunByRegion, regions]);
 
   const activityFilterCounts = useMemo(() => {
     return {
@@ -1064,119 +961,6 @@ function TileManagement() {
         ),
       },
       {
-        field: "lastUpdated",
-        headerName: "Last Updated",
-        minWidth: 165,
-        renderCell: ({ value }) => {
-          console.log('🔧 [TILE_MGMT] LastUpdated renderCell called with:', value);
-          return formatDate(value ?? null);
-        },
-      },
-      {
-        field: "sizeBytes",
-        headerName: "Size",
-        minWidth: 90,
-        renderCell: ({ value }) => {
-          console.log('🔧 [TILE_MGMT] SizeBytes renderCell called with:', value);
-          return formatBytes(value ?? null);
-        },
-      },
-      {
-        field: "tileCount",
-        headerName: "Tiles",
-        minWidth: 80,
-        renderCell: ({ value, row }) => {
-          if (!value && !row.lastUpdated) return "N/A";
-          return (value ?? 0).toLocaleString();
-        },
-      },
-      {
-        field: "actions",
-        headerName: "Actions",
-        minWidth: 300,
-        maxWidth: 360,
-        sortable: false,
-        filterable: false,
-        renderCell: ({ row }) => {
-          const isRegion = row.nodeType === "region";
-          const isSynthetic = !!row.isSynthetic;
-          const packageLoading = !!running[`package-${row.regionId}`];
-          const regionLoading = !!running[`region-${row.regionId}`];
-
-          if (isSynthetic) {
-            return (
-              <Typography variant="body2" color="text.disabled" sx={{ fontStyle: "italic" }}>
-                Not generated
-              </Typography>
-            );
-          }
-
-          return (
-            <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap>
-              <Tooltip title={`Build package for ${row.name} (handles large packages without timeouts)`}>
-                <span>
-                  <Button
-                    size="small"
-                    variant="contained"
-                    color="secondary"
-                    onClick={() => handleProgressiveGeneration(row.regionId, false, row.name)}
-                    disabled={packageLoading || regionLoading || !!running.updateAll}
-                    startIcon={packageLoading ? <CircularProgress size={12} color="inherit" /> : <Package size={14} />}
-                  >
-                    Build Package
-                  </Button>
-                </span>
-              </Tooltip>
-
-              {isRegion && row.hasSubregions && (
-                <Tooltip title={`Build packages for ${row.name} and all subregions`}>
-                  <span>
-                    <Button
-                      size="small"
-                      variant="contained"
-                      onClick={() => handleProgressiveGeneration(row.regionId, true, row.name)}
-                      disabled={regionLoading || packageLoading || !!running.updateAll}
-                      startIcon={regionLoading ? <CircularProgress size={12} color="inherit" /> : <Package size={14} />}
-                    >
-                      Build Region
-                    </Button>
-                  </span>
-                </Tooltip>
-              )}
-
-              {!isRegion && (
-                (() => {
-                  console.log('🔧 [REPAIR] Rendering Repair button for row:', { 
-                    id: row.id, 
-                    name: row.name, 
-                    nodeType: row.nodeType, 
-                    isRegion,
-                    shouldShow: !isRegion 
-                  });
-                  return (
-                    <Tooltip title="Repair manifest from existing R2 file — no regeneration needed">
-                      <span>
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          color="warning"
-                          onClick={() => handleRepairManifest(row.regionId, row.name)}
-                          disabled={!!running[`repair-${row.regionId}`] || packageLoading || !!running.updateAll}
-                          startIcon={running[`repair-${row.regionId}`] ? <CircularProgress size={12} color="inherit" /> : <RefreshCw size={14} />}
-                        >
-                          Repair
-                        </Button>
-                      </span>
-                    </Tooltip>
-                  );
-                })()
-              )}
-            </Stack>
-          );
-        },
-      },
-      // Remaining columns after Actions
-      {
         field: "seasonalInfo",
         headerName: "Seasonal",
         minWidth: 140,
@@ -1232,9 +1016,36 @@ function TileManagement() {
         },
       },
       {
+        field: "lastUpdated",
+        headerName: "Last Updated",
+        minWidth: 165,
+        renderCell: ({ value }) => {
+          console.log('🔧 [TILE_MGMT] LastUpdated renderCell called with:', value);
+          return formatDate(value ?? null);
+        },
+      },
+      {
         field: "version",
         headerName: "Version",
         minWidth: 100,
+      },
+      {
+        field: "sizeBytes",
+        headerName: "Size",
+        minWidth: 90,
+        renderCell: ({ value }) => {
+          console.log('🔧 [TILE_MGMT] SizeBytes renderCell called with:', value);
+          return formatBytes(value ?? null);
+        },
+      },
+      {
+        field: "tileCount",
+        headerName: "Tiles",
+        minWidth: 80,
+        renderCell: ({ value }) => {
+          console.log('🔧 [TILE_MGMT] TileCount renderCell called with:', value);
+          return (value ?? 0).toLocaleString();
+        },
       },
       {
         field: "lastRunStatus",
@@ -1263,8 +1074,105 @@ function TileManagement() {
           </Typography>
         ),
       },
+      {
+        field: "actions",
+        headerName: "Actions",
+        minWidth: 280,
+        maxWidth: 320,
+        sortable: false,
+        filterable: false,
+        renderCell: ({ row }) => {
+          const isRegion = row.nodeType === "region";
+          const packageLoading = !!running[`package-${row.regionId}`];
+          const regionLoading = !!running[`region-${row.regionId}`];
+
+          return (
+            <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap>
+              <Tooltip title={`Update only ${row.name}`}>
+                <span>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => handleUpdatePackage(row.regionId, row.name)}
+                    disabled={packageLoading || regionLoading || !!running.updateAll}
+                    startIcon={packageLoading ? <CircularProgress size={12} /> : <Play size={14} />}
+                  >
+                    Update Package
+                  </Button>
+                </span>
+              </Tooltip>
+
+              {isRegion && row.hasSubregions && (
+                <>
+                  <Tooltip title={`Update ${row.name} and all nested packages`}>
+                    <span>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        onClick={() => handleUpdateRegion(row.regionId, row.name)}
+                        disabled={regionLoading || packageLoading || !!running.updateAll}
+                        startIcon={regionLoading ? <CircularProgress size={12} color="inherit" /> : <Play size={14} />}
+                      >
+                        Update Region + Subregions
+                      </Button>
+                    </span>
+                  </Tooltip>
+                </>
+              )}
+            </Stack>
+          );
+        },
+      },
+      {
+        field: "progressive",
+        headerName: "Progressive Generation",
+        minWidth: 200,
+        maxWidth: 250,
+        sortable: false,
+        filterable: false,
+        renderCell: ({ row }) => {
+          const packageLoading = !!running[`package-${row.regionId}`];
+          const regionLoading = !!running[`region-${row.regionId}`];
+
+          return (
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Tooltip title={`Progressive generation for ${row.name} (handles large packages without timeouts)`}>
+                <span>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="secondary"
+                    onClick={() => handleProgressiveGeneration(row.regionId, false, row.name)}
+                    disabled={packageLoading || regionLoading || !!running.updateAll}
+                    startIcon={<Package size={14} />}
+                  >
+                    Progressive Package
+                  </Button>
+                </span>
+              </Tooltip>
+
+              {row.nodeType === "region" && row.hasSubregions && (
+                <Tooltip title={`Progressive generation for ${row.name} and all subregions`}>
+                  <span>
+                    <Button
+                      size="small"
+                      variant="contained"
+                      color="secondary"
+                      onClick={() => handleProgressiveGeneration(row.regionId, true, row.name)}
+                      disabled={regionLoading || packageLoading || !!running.updateAll}
+                      startIcon={<Package size={14} />}
+                    >
+                      Progressive Region
+                  </Button>
+                  </span>
+                </Tooltip>
+              )}
+            </Stack>
+          );
+        },
+      },
     ],
-    [handleProgressiveGeneration, handleRepairManifest, running]
+    [handleUpdatePackage, handleUpdateRegion, handleProgressiveGeneration, running]
   );
 
   return (
@@ -1288,15 +1196,6 @@ function TileManagement() {
             disabled={loading}
           >
             Refresh Status
-          </Button>
-          <Button
-            variant="outlined"
-            color="warning"
-            startIcon={<Trash size={16} />}
-            onClick={handleClearCache}
-            disabled={loading}
-          >
-            Clear Cache
           </Button>
           <Button
             variant="contained"
@@ -1346,7 +1245,7 @@ function TileManagement() {
             return null;
           })()}
           <DataGrid
-            key={`tile-management-${refreshTrigger}-${Date.now()}`} // Force re-render with timestamp
+            key={`rows-${rows.length}-${JSON.stringify(rows.map(r => ({id: r.id, size: r.sizeBytes, tiles: r.tileCount})))}`} // Force re-render when row data changes
             rows={rows}
             columns={columns}
             loading={loading}
@@ -1365,20 +1264,12 @@ function TileManagement() {
                 paginationModel: { pageSize: 10, page: 0 },
               },
             }}
-            getRowClassName={({ row }) => row.nodeType === "region" ? "region-header-row" : ""}
             sx={{
               border: "1px solid",
               borderColor: "divider",
               borderRadius: 2,
               "& .MuiDataGrid-cell": {
                 alignItems: "center",
-              },
-              "& .region-header-row": {
-                backgroundColor: "rgba(33, 150, 243, 0.08)",
-                fontWeight: 600,
-              },
-              "& .region-header-row:hover": {
-                backgroundColor: "rgba(33, 150, 243, 0.15)",
               },
             }}
           />

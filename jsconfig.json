@@ -1,9 +1,7 @@
 {
   "compilerOptions": {
     "skipLibCheck": true,
-    "checkJs": false,
     "baseUrl": "src/",
-    "types": [],
     "paths": {
       // Folders
       "@/components/*": ["components/*"],
@@ -25,6 +23,5 @@
       "@/mocks": ["mocks/index"],
       "@/theme": ["theme/index"],
     }
-  },
-  "exclude": ["node_modules", "dist", "build"]
+  }
 }

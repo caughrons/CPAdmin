@@ -1,23 +1,56 @@
 import firebase from "firebase/app";
 import "firebase/auth";
-import "firebase/functions";
 import { firebaseConfig } from "@/config";
 
 if (!firebase.apps.length) {
   firebase.initializeApp(firebaseConfig);
 }
 
-const functions = firebase.functions();
+const PROJECT_ID = firebaseConfig.projectId;
+const REGION = 'us-central1';
+
+function getFunctionUrl(functionName) {
+  return `https://${REGION}-${PROJECT_ID}.cloudfunctions.net/${functionName}`;
+}
+
+async function waitForUser() {
+  return new Promise((resolve) => {
+    const unsubscribe = firebase.auth().onAuthStateChanged((user) => {
+      unsubscribe();
+      resolve(user);
+    });
+  });
+}
 
 async function callFunction(functionName, data) {
-  try {
-    const callable = functions.httpsCallable(functionName);
-    const result = await callable(data);
-    return result.data;
-  } catch (error) {
-    console.error(`Function ${functionName} error:`, error);
-    throw new Error(error.message || 'Function call failed');
+  const user = await waitForUser();
+  if (!user) {
+    throw new Error('Not authenticated');
   }
+
+  const token = await user.getIdToken();
+  const url = getFunctionUrl(functionName);
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({ data }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `HTTP ${response.status}`);
+  }
+
+  const result = await response.json();
+  if (result.error) {
+    throw new Error(result.error.message || 'Function error');
+  }
+
+  return result.result;
 }
 
 export async function listSpots(pageSize, pageToken, filters) {
@@ -70,36 +103,4 @@ export async function bulkUpdateRegion(region) {
 
 export async function migrateSpotSchema(dryRun) {
   return callFunction('migrateSpotSchema', { dryRun });
-}
-
-export async function generateSnapshotForSpot(latitude, longitude) {
-  return callFunction('generateSnapshotForSpot', { latitude, longitude });
-}
-
-export async function bulkGenerateSnapshots() {
-  return callFunction('bulkGenerateSnapshots', {});
-}
-
-export async function processSnapshotBatch(spotId) {
-  return callFunction('processSnapshotBatch', { spotId });
-}
-
-export async function cleanupOldPngSnapshots() {
-  return callFunction('cleanupOldPngSnapshots', {});
-}
-
-export async function analyzeR2Storage() {
-  return callFunction('analyzeR2Storage', {});
-}
-
-export async function quickStorageStats() {
-  return callFunction('quickStorageStats', {});
-}
-
-export async function processCruisnewsImages(options = {}) {
-  return callFunction('processCruisnewsImages', options);
-}
-
-export async function deleteCruisnewsPngs(options = {}) {
-  return callFunction('deleteCruisnewsPngs', options);
 }

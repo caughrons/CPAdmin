@@ -39,7 +39,6 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { InputAdornment, IconButton as MuiIconButton } from "@mui/material";
 import {
   listSpots,
   manageSpot,
@@ -54,13 +53,6 @@ import {
   purgeDeletedSpots,
   bulkUpdateRegion,
   migrateSpotSchema,
-  bulkGenerateSnapshots,
-  processSnapshotBatch,
-  cleanupOldPngSnapshots,
-  analyzeR2Storage,
-  quickStorageStats,
-  processCruisnewsImages,
-  deleteCruisnewsPngs,
 } from "@/services/spotsAdmin";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -238,29 +230,6 @@ function Spots() {
   const [migrateDialogOpen, setMigrateDialogOpen] = useState(false);
   const [migrateResult, setMigrateResult] = useState(null);
   const [migrateLoading, setMigrateLoading] = useState(false);
-  
-  // Bulk snapshot generation state
-  const [snapshotDialogOpen, setSnapshotDialogOpen] = useState(false);
-  const [snapshotProgress, setSnapshotProgress] = useState({
-    total: 0,
-    processed: 0,
-    successful: 0,
-    failed: 0,
-    errors: [],
-    isProcessing: false,
-    cancelRequested: false
-  });
-  
-  // Cleanup PNG snapshots state
-  const [cleanupLoading, setCleanupLoading] = useState(false);
-  const [cleanupResult, setCleanupResult] = useState(null);
-  
-  // Storage analysis state
-  const [analysisLoading, setAnalysisLoading] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState(null);
-  const [quickStatsLoading, setQuickStatsLoading] = useState(false);
-  const [processCruisnewsLoading, setProcessCruisnewsLoading] = useState(false);
-  const [deletePngsLoading, setDeletePngsLoading] = useState(false);
 
   // ── Load spots ─────────────────────────────────────────────────────────────
   
@@ -472,287 +441,6 @@ function Spots() {
     }
   };
   
-  const handleBulkSnapshotGeneration = async () => {
-    try {
-      setSnapshotProgress({ 
-        total: 0,
-        processed: 0,
-        successful: 0,
-        failed: 0,
-        errors: [],
-        isProcessing: true,
-        cancelRequested: false
-      });
-      
-      // Get list of spots without snapshots
-      const result = await bulkGenerateSnapshots();
-      
-      setSnapshotProgress({
-        total: result.totalSpots,
-        processed: 0,
-        successful: 0,
-        failed: 0,
-        errors: [],
-        isProcessing: true,
-        cancelRequested: false
-      });
-      
-      setSnapshotDialogOpen(true);
-      
-      // Process each spot sequentially
-      for (let i = 0; i < result.spotIds.length; i++) {
-        // Check if cancellation was requested
-        const shouldCancel = await new Promise(resolve => {
-          setSnapshotProgress(prev => {
-            resolve(prev.cancelRequested);
-            return prev;
-          });
-        });
-        
-        if (shouldCancel) {
-          console.log('Snapshot generation cancelled by user');
-          break;
-        }
-        
-        const spotId = result.spotIds[i];
-        
-        try {
-          const batchResult = await processSnapshotBatch(spotId);
-          
-          setSnapshotProgress(prev => ({
-            ...prev,
-            processed: prev.processed + 1,
-            successful: batchResult.success ? prev.successful + 1 : prev.successful,
-            failed: batchResult.success ? prev.failed : prev.failed + 1,
-            errors: batchResult.success ? prev.errors : [...prev.errors, { 
-              spotId, 
-              spotName: batchResult.spotName || spotId,
-              error: batchResult.error 
-            }]
-          }));
-        } catch (error) {
-          setSnapshotProgress(prev => ({
-            ...prev,
-            processed: prev.processed + 1,
-            failed: prev.failed + 1,
-            errors: [...prev.errors, { spotId, error: error.message }]
-          }));
-        }
-        
-        // Small delay between requests
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-      
-      setSnapshotProgress(prev => ({ ...prev, isProcessing: false }));
-      
-    } catch (error) {
-      alert(`Failed to start snapshot generation: ${error.message}`);
-      setSnapshotProgress(prev => ({ ...prev, isProcessing: false, cancelRequested: false }));
-    }
-  };
-  
-  const handleCleanupPngSnapshots = async () => {
-    if (!confirm('This will delete all old PNG snapshot files from R2 storage. Continue?')) {
-      return;
-    }
-    
-    setCleanupLoading(true);
-    setCleanupResult(null);
-    
-    try {
-      const result = await cleanupOldPngSnapshots();
-      setCleanupResult(result);
-      alert(`Cleanup complete!\nDeleted: ${result.deleted}\nFailed: ${result.failed}\nTotal found: ${result.totalFound}`);
-    } catch (error) {
-      alert(`Cleanup failed: ${error.message}`);
-    } finally {
-      setCleanupLoading(false);
-    }
-  };
-  
-  const handleAnalyzeStorage = async () => {
-    setAnalysisLoading(true);
-    setAnalysisResult(null);
-    
-    try {
-      const result = await analyzeR2Storage();
-      setAnalysisResult(result);
-      
-      // Log full results to console for detailed analysis
-      console.log('=== R2 STORAGE ANALYSIS ===');
-      console.log('Total Files:', result.totalFiles);
-      console.log('Total Size:', result.totalSizeFormatted);
-      console.log('\n=== BY CATEGORY ===');
-      
-      // Create a summary for the alert
-      let summary = `Storage Analysis Complete!\n\n`;
-      summary += `Total Files: ${result.totalFiles}\n`;
-      summary += `Total Size: ${result.totalSizeFormatted}\n\n`;
-      summary += `Top Categories:\n`;
-      
-      // Sort categories by size and show top 5
-      const sortedCategories = Object.entries(result.byCategory)
-        .sort(([,a], [,b]) => b.size - a.size)
-        .slice(0, 5);
-      
-      sortedCategories.forEach(([category, stats]) => {
-        summary += `${category}: ${stats.count} files, ${stats.sizeFormatted}\n`;
-        console.log(`${category}:`);
-        console.log(`  Files: ${stats.count}`);
-        console.log(`  Size: ${stats.sizeFormatted}`);
-        console.log(`  Extensions:`, stats.byExtension);
-      });
-      
-      console.log('\n=== LARGEST FILES ===');
-      console.table(result.largestFiles.slice(0, 20));
-      
-      console.log('\n=== FULL RESULTS ===');
-      console.log(JSON.stringify(result, null, 2));
-      
-      alert(summary + '\n\nFull details logged to console (F12 → Console)');
-    } catch (error) {
-      console.error('Analysis failed:', error);
-      alert(`Analysis failed: ${error.message}\n\nCheck console for details.`);
-    } finally {
-      setAnalysisLoading(false);
-    }
-  };
-  
-  const handleQuickStats = async () => {
-    setQuickStatsLoading(true);
-    
-    try {
-      const result = await quickStorageStats();
-      
-      console.log('=== QUICK STORAGE STATS ===');
-      console.log('Total Files:', result.totalFiles);
-      console.log('Total Size:', result.totalSizeFormatted);
-      console.log('\n=== BY CATEGORY ===');
-      
-      let summary = `Quick Storage Stats:\n\n`;
-      summary += `Total Files: ${result.totalFiles}\n`;
-      summary += `Total Size: ${result.totalSizeFormatted}\n\n`;
-      summary += `Categories:\n`;
-      
-      Object.entries(result.categories).forEach(([category, stats]) => {
-        summary += `${category}: ${stats.count} files, ${stats.sizeFormatted}\n`;
-        console.log(`${category}:`, stats);
-      });
-      
-      console.log('\n=== FULL RESULT ===');
-      console.log(JSON.stringify(result, null, 2));
-      
-      alert(summary + '\n\nFull details logged to console (F12 → Console)');
-    } catch (error) {
-      console.error('Quick stats failed:', error);
-      alert(`Quick stats failed: ${error.message}\n\nCheck console for details.`);
-    } finally {
-      setQuickStatsLoading(false);
-    }
-  };
-  
-  const handleProcessCruisnewsImages = async (dryRun = false) => {
-    const action = dryRun ? 'Dry run' : 'Process';
-    const confirmMessage = dryRun 
-      ? 'This will analyze CruisNews images without making changes. Continue?'
-      : 'This will convert all CruisNews PNG images to optimized WebP format. This action cannot be undone. Continue?';
-      
-    if (!confirm(confirmMessage)) {
-      return;
-    }
-    
-    setProcessCruisnewsLoading(true);
-    
-    try {
-      const result = await processCruisnewsImages({ dryRun, batchSize: 10 });
-      
-      console.log(`=== CRUISNEWS IMAGE PROCESSING (${action.toUpperCase()}) ===`);
-      console.log('Result:', result);
-      
-      let message = `${action} Complete!\n\n`;
-      message += `Total PNG images found: ${result.totalFound}\n`;
-      message += `Processed: ${result.processed}\n`;
-      message += `Skipped: ${result.skipped}\n`;
-      message += `Failed: ${result.failed}\n`;
-      
-      if (result.spaceSaved > 0) {
-        message += `Space saved: ${result.spaceSavedFormatted}\n`;
-      }
-      
-      if (result.errors.length > 0) {
-        message += `\nErrors (first 5):\n`;
-        result.errors.slice(0, 5).forEach(error => {
-          message += `- ${error}\n`;
-        });
-        if (result.errors.length > 5) {
-          message += `... and ${result.errors.length - 5} more errors (check console)`;
-        }
-      }
-      
-      if (!dryRun && result.processed > 0) {
-        message += `\n✅ ${result.processed} images converted to WebP format!`;
-      }
-      
-      alert(message + '\n\nFull details logged to console (F12 → Console)');
-    } catch (error) {
-      console.error(`${action} failed:`, error);
-      alert(`${action} failed: ${error.message}\n\nCheck console for details.`);
-    } finally {
-      setProcessCruisnewsLoading(false);
-    }
-  };
-  
-  const handleDeleteCruisnewsPngs = async (dryRun = false) => {
-    const action = dryRun ? 'Dry run' : 'Delete';
-    const confirmMessage = dryRun 
-      ? 'This will analyze CruisNews PNG images for deletion without making changes. Continue?'
-      : '⚠️ WARNING: This will permanently delete all CruisNews PNG images from R2 storage. This action cannot be undone. Only run this AFTER confirming WebP conversions are working. Continue?';
-      
-    if (!confirm(confirmMessage)) {
-      return;
-    }
-    
-    setDeletePngsLoading(true);
-    
-    try {
-      const result = await deleteCruisnewsPngs({ dryRun, batchSize: 50 });
-      
-      console.log(`=== CRUISNEWS PNG DELETION (${action.toUpperCase()}) ===`);
-      console.log('Result:', result);
-      
-      let message = `${action} Complete!\n\n`;
-      message += `Total PNG images found: ${result.totalFound}\n`;
-      message += `Deleted: ${result.deleted}\n`;
-      message += `Failed: ${result.failed}\n`;
-      
-      if (result.spaceFreed > 0) {
-        message += `Space freed: ${result.spaceFreedFormatted}\n`;
-      }
-      
-      if (result.errors.length > 0) {
-        message += `\nErrors (first 5):\n`;
-        result.errors.slice(0, 5).forEach(error => {
-          message += `- ${error}\n`;
-        });
-        if (result.errors.length > 5) {
-          message += `... and ${result.errors.length - 5} more errors (check console)`;
-        }
-      }
-      
-      if (!dryRun && result.deleted > 0) {
-        message += `\n🗑️ ${result.deleted} PNG files permanently deleted!`;
-        message += `\n💾 ${result.spaceFreedFormatted} of storage freed!`;
-      }
-      
-      alert(message + '\n\nFull details logged to console (F12 → Console)');
-    } catch (error) {
-      console.error(`${action} failed:`, error);
-      alert(`${action} failed: ${error.message}\n\nCheck console for details.`);
-    } finally {
-      setDeletePngsLoading(false);
-    }
-  };
-  
   const handleBulkDelete = async () => {
     if (selectedRows.length === 0) {
       alert('No spots selected');
@@ -893,15 +581,6 @@ function Spots() {
       width: 100,
       renderCell: (params) =>
         params.value ? `⭐ ${params.value.toFixed(1)}` : "—",
-    },
-    {
-      field: "mapSnapshotR2Key",
-      headerName: "Snapshot",
-      width: 100,
-      renderCell: (params) =>
-        params.value ? (
-          <CheckCircle size={18} color="green" />
-        ) : null,
     },
     {
       field: "photoCount",
@@ -1202,19 +881,7 @@ function Spots() {
       {tab === 0 && (
         <Paper>
           <Box sx={{ p: 2, borderBottom: 1, borderColor: "divider" }}>
-            <Box
-              sx={{
-                display: 'grid',
-                gridTemplateColumns: { 
-                  xs: 'repeat(2, 1fr)',
-                  sm: 'repeat(3, 1fr)',
-                  md: 'repeat(4, 1fr)',
-                  lg: 'repeat(6, 1fr)'
-                },
-                gap: 2,
-                '& > *': { width: '100%' }
-              }}
-            >
+            <Stack direction="row" spacing={2} alignItems="center">
               <TextField
                 size="small"
                 label="Search Name"
@@ -1223,9 +890,10 @@ function Spots() {
                 onChange={(e) =>
                   setFilters({ ...filters, nameSearch: e.target.value })
                 }
+                sx={{ minWidth: 200 }}
               />
               
-              <FormControl size="small">
+              <FormControl size="small" sx={{ minWidth: 150 }}>
                 <InputLabel>Type</InputLabel>
                 <Select
                   value={filters.type || ""}
@@ -1241,7 +909,7 @@ function Spots() {
                 </Select>
               </FormControl>
               
-              <FormControl size="small">
+              <FormControl size="small" sx={{ minWidth: 150 }}>
                 <InputLabel>Verified</InputLabel>
                 <Select
                   value={filters.verified === undefined ? "" : String(filters.verified)}
@@ -1260,7 +928,7 @@ function Spots() {
                 </Select>
               </FormControl>
               
-              <FormControl size="small">
+              <FormControl size="small" sx={{ minWidth: 150 }}>
                 <InputLabel>Region</InputLabel>
                 <Select
                   value={filters.region || ""}
@@ -1285,19 +953,7 @@ function Spots() {
                   setFilters({ ...filters, startDate: e.target.value || null })
                 }
                 InputLabelProps={{ shrink: true }}
-                InputProps={{
-                  endAdornment: filters.startDate ? (
-                    <InputAdornment position="end">
-                      <MuiIconButton
-                        size="small"
-                        onClick={() => setFilters({ ...filters, startDate: null })}
-                        edge="end"
-                      >
-                        <X size={16} />
-                      </MuiIconButton>
-                    </InputAdornment>
-                  ) : null
-                }}
+                sx={{ minWidth: 150 }}
               />
               
               <TextField
@@ -1309,28 +965,11 @@ function Spots() {
                   setFilters({ ...filters, endDate: e.target.value || null })
                 }
                 InputLabelProps={{ shrink: true }}
-                InputProps={{
-                  endAdornment: filters.endDate ? (
-                    <InputAdornment position="end">
-                      <MuiIconButton
-                        size="small"
-                        onClick={() => setFilters({ ...filters, endDate: null })}
-                        edge="end"
-                      >
-                        <X size={16} />
-                      </MuiIconButton>
-                    </InputAdornment>
-                  ) : null
-                }}
+                sx={{ minWidth: 150 }}
               />
-            </Box>
-            <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
-              <IconButton onClick={loadSpots} disabled={loading}>
-                <RefreshCw size={18} />
-              </IconButton>
-            </Box>
-            
-            <Box sx={{ mt: 2, display: 'flex', alignItems: 'center' }}>
+              
+              <Box sx={{ flexGrow: 1 }} />
+              
               <Typography variant="body2" sx={{ mr: 2, fontWeight: 600 }}>
                 Total: {totalCount} spot{totalCount !== 1 ? 's' : ''}
               </Typography>
@@ -1394,87 +1033,10 @@ function Spots() {
                 Migrate Schema
               </Button>
               
-              <Button
-                size="small"
-                variant="outlined"
-                color="primary"
-                onClick={handleBulkSnapshotGeneration}
-                disabled={snapshotProgress.isProcessing}
-                sx={{ mr: 1 }}
-              >
-                Create Snapshots
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                color="info"
-                onClick={handleQuickStats}
-                disabled={quickStatsLoading}
-                sx={{ mr: 1 }}
-              >
-                {quickStatsLoading ? 'Loading...' : 'Quick Stats'}
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                color="primary"
-                onClick={handleAnalyzeStorage}
-                disabled={analysisLoading}
-                sx={{ mr: 1 }}
-              >
-                {analysisLoading ? 'Analyzing...' : 'Full Analysis'}
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                color="warning"
-                onClick={() => handleProcessCruisnewsImages(true)}
-                disabled={processCruisnewsLoading}
-                sx={{ mr: 1 }}
-              >
-                {processCruisnewsLoading ? 'Analyzing...' : 'CruisNews Dry Run'}
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                color="secondary"
-                onClick={() => handleProcessCruisnewsImages(false)}
-                disabled={processCruisnewsLoading}
-                sx={{ mr: 1 }}
-              >
-                {processCruisnewsLoading ? 'Processing...' : 'Convert CruisNews'}
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                color="success"
-                onClick={() => handleDeleteCruisnewsPngs(true)}
-                disabled={deletePngsLoading}
-                sx={{ mr: 1 }}
-              >
-                {deletePngsLoading ? 'Analyzing...' : 'PNGs Dry Run'}
-              </Button>
-              <Button
-                size="small"
-                variant="contained"
-                color="error"
-                onClick={() => handleDeleteCruisnewsPngs(false)}
-                disabled={deletePngsLoading}
-                sx={{ mr: 1 }}
-              >
-                {deletePngsLoading ? 'Deleting...' : 'Delete PNGs ⚠️'}
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                color="error"
-                onClick={handleCleanupPngSnapshots}
-                disabled={cleanupLoading}
-                sx={{ mr: 1 }}
-              >
-                {cleanupLoading ? 'Cleaning...' : 'Cleanup Old PNGs'}
-              </Button>
-            </Box>
+              <IconButton onClick={loadSpots} disabled={loading}>
+                <RefreshCw size={18} />
+              </IconButton>
+            </Stack>
           </Box>
           
           {loading && <LinearProgress />}
@@ -1550,494 +1112,177 @@ function Spots() {
           setDetailDrawerOpen(false);
           setSelectedSpot(null);
           setSpotDetail(null);
-          setEditForm({});
         }}
-        PaperProps={{ 
-          sx: { 
-            width: { xs: '100%', sm: '100%', md: 700 },
-            maxWidth: '100%'
-          } 
-        }}
+        PaperProps={{ sx: { width: 420 } }}
       >
         {selectedSpot && (
-          <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-            {/* Header */}
-            <Box sx={{ p: 3, pb: 2, borderBottom: 1, borderColor: 'divider' }}>
-              <Stack direction="row" alignItems="center" spacing={2}>
-                <Box sx={{ flexGrow: 1 }}>
-                  <Typography variant="h5" sx={{ fontWeight: 600, mb: 0.5 }}>
-                    {selectedSpot.name}
-                  </Typography>
-                  <Stack direction="row" spacing={1} flexWrap="wrap">
-                    <Chip
-                      label={selectedSpot.type}
-                      color={TYPE_COLORS[selectedSpot.type] || "default"}
-                      size="small"
-                    />
-                    {selectedSpot.verified && (
-                      <Chip label="Verified" color="success" size="small" icon={<CheckCircle size={14} />} />
-                    )}
-                    {selectedSpot.deleted && (
-                      <Chip label="Deleted" color="error" size="small" />
-                    )}
-                    {selectedSpot.isPrivate && (
-                      <Chip label="Private" color="warning" size="small" />
-                    )}
-                  </Stack>
-                </Box>
-                <IconButton
-                  onClick={() => {
-                    setDetailDrawerOpen(false);
-                    setSelectedSpot(null);
-                    setSpotDetail(null);
-                    setEditForm({});
-                  }}
-                >
-                  <X size={20} />
-                </IconButton>
-              </Stack>
-            </Box>
+          <Box sx={{ p: 3 }}>
+            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
+              <Typography variant="h6" sx={{ flexGrow: 1 }}>
+                {selectedSpot.name}
+              </Typography>
+              <IconButton
+                size="small"
+                onClick={() => {
+                  setDetailDrawerOpen(false);
+                  setSelectedSpot(null);
+                  setSpotDetail(null);
+                }}
+              >
+                <X size={18} />
+              </IconButton>
+            </Stack>
+            
+            <Stack spacing={1} sx={{ mb: 2 }}>
+              <Chip
+                label={selectedSpot.type}
+                color={TYPE_COLORS[selectedSpot.type] || "default"}
+                size="small"
+                sx={{ width: "fit-content" }}
+              />
+              {selectedSpot.verified && (
+                <Chip
+                  label="Verified"
+                  color="success"
+                  size="small"
+                  sx={{ width: "fit-content" }}
+                />
+              )}
+              {selectedSpot.deleted && (
+                <Chip
+                  label="Deleted"
+                  color="error"
+                  size="small"
+                  sx={{ width: "fit-content" }}
+                />
+              )}
+            </Stack>
             
             {detailLoading ? (
-              <Box sx={{ p: 3 }}>
-                <Stack spacing={2}>
-                  {[1, 2, 3, 4, 5, 6].map(i => <Skeleton key={i} height={80} />)}
-                </Stack>
-              </Box>
+              <Stack spacing={1} mt={2}>
+                {[1, 2, 3, 4].map(i => <Skeleton key={i} height={20} />)}
+              </Stack>
             ) : spotDetail ? (
-              <Box sx={{ flexGrow: 1, overflowY: 'auto', overflowX: 'hidden', p: { xs: 2, sm: 3 } }}>
-                <Stack spacing={2.5}>
-                  {/* Map Snapshot & Images Section */}
-                  <Paper elevation={0} sx={{ p: 2.5, bgcolor: 'grey.50', border: 1, borderColor: 'divider' }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
-                      Media
-                    </Typography>
-                    
-                    {/* Map Snapshot */}
-                    <Box sx={{ mb: 2 }}>
-                      <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                        Map Snapshot
-                      </Typography>
-                      {spotDetail.spot.mapSnapshotR2Key ? (
-                        <Box
-                          component="img"
-                          src={`https://cruisapalooza.com/${spotDetail.spot.mapSnapshotR2Key}`}
-                          alt="Map snapshot"
-                          sx={{
-                            width: '100%',
-                            height: 240,
-                            objectFit: 'cover',
-                            borderRadius: 1.5,
-                            bgcolor: 'grey.200',
-                            boxShadow: 1,
-                            mb: 1
-                          }}
-                          onError={(e) => {
-                            console.error('Failed to load snapshot:', spotDetail.spot.mapSnapshotR2Key);
-                            e.target.style.display = 'none';
-                          }}
-                        />
-                      ) : (
-                        <Box
-                          sx={{
-                            width: '100%',
-                            height: 240,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            borderRadius: 1.5,
-                            bgcolor: 'grey.200',
-                            border: '2px dashed',
-                            borderColor: 'grey.400',
-                            mb: 1
-                          }}
-                        >
-                          <Typography variant="body2" color="text.secondary">
-                            No snapshot available
-                          </Typography>
-                        </Box>
-                      )}
-                      <Button
-                        variant="outlined"
-                        size="small"
-                        fullWidth
-                        startIcon={<RefreshCw size={16} />}
-                        onClick={async () => {
-                          try {
-                            setDetailLoading(true);
-                            // Trigger snapshot generation by updating the spot
-                            // The Cloud Function onSpotWrite will detect the change and generate snapshot
-                            await handleSpotAction(selectedSpot.id, "edit", {
-                              name: spotDetail.spot.name,
-                              description: spotDetail.spot.description,
-                              type: spotDetail.spot.type,
-                              region: spotDetail.spot.region
-                            });
-                            alert("Snapshot generation triggered! The page will reload in 30 seconds to show the new snapshot.");
-                            setTimeout(() => {
-                              loadSpotDetail(selectedSpot.id);
-                              setDetailLoading(false);
-                            }, 30000);
-                          } catch (e) {
-                            alert(`Failed to trigger snapshot: ${e.message}`);
-                            setDetailLoading(false);
-                          }
-                        }}
-                      >
-                        {spotDetail.spot.mapSnapshotR2Key ? 'Regenerate Snapshot' : 'Generate Snapshot'}
-                      </Button>
-                    </Box>
-
-                    {/* Spot Images */}
-                    <Box>
-                      <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                        Photos {spotDetail.images && spotDetail.images.length > 0 ? `(${spotDetail.images.length})` : ''}
-                      </Typography>
-                      {spotDetail.images && spotDetail.images.length > 0 ? (
-                        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 1.5 }}>
-                          {spotDetail.images.map((image, idx) => (
-                            <Box
-                              key={image.id || idx}
-                              sx={{
-                                position: 'relative',
-                                paddingTop: '75%',
-                                borderRadius: 1.5,
-                                overflow: 'hidden',
-                                boxShadow: 1,
-                                border: image.isPrimary ? 3 : 0,
-                                borderColor: 'primary.main'
-                              }}
-                            >
-                              <Box
-                                component="img"
-                                src={image.r2Key ? `https://cruisapalooza.com/${image.r2Key}` : image.url}
-                                alt={`Spot image ${idx + 1}`}
-                                sx={{
-                                  position: 'absolute',
-                                  top: 0,
-                                  left: 0,
-                                  width: '100%',
-                                  height: '100%',
-                                  objectFit: 'cover',
-                                  bgcolor: 'grey.200'
-                                }}
-                                onError={(e) => {
-                                  console.error('Failed to load image:', image);
-                                  e.target.style.display = 'none';
-                                }}
-                              />
-                              {image.isPrimary && (
-                                <Chip
-                                  label="Primary"
-                                  size="small"
-                                  color="primary"
-                                  sx={{
-                                    position: 'absolute',
-                                    top: 8,
-                                    right: 8,
-                                    height: 20,
-                                    fontSize: '0.7rem'
-                                  }}
-                                />
-                              )}
-                            </Box>
-                          ))}
-                        </Box>
-                      ) : (
-                        <Box
-                          sx={{
-                            width: '100%',
-                            height: 120,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            borderRadius: 1.5,
-                            bgcolor: 'grey.200',
-                            border: '2px dashed',
-                            borderColor: 'grey.400'
-                          }}
-                        >
-                          <Typography variant="body2" color="text.secondary">
-                            No photos available
-                          </Typography>
-                        </Box>
-                      )}
-                    </Box>
-                  </Paper>
-
-                  {/* Basic Info Section */}
-                  <Paper elevation={0} sx={{ p: 2.5, bgcolor: 'grey.50', border: 1, borderColor: 'divider' }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
-                      Basic Information
-                    </Typography>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <TextField
-                        label="Name"
-                        value={editForm.name !== undefined ? editForm.name : (spotDetail.spot.name || "")}
-                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                        size="small"
-                        variant="outlined"
-                        sx={{
-                          '& .MuiOutlinedInput-root': {
-                            backgroundColor: 'white',
-                            minHeight: 40
-                          }
-                        }}
-                      />
-
-                      <FormControl size="small" variant="outlined">
-                        <InputLabel>Type</InputLabel>
-                        <Select
-                          value={editForm.type !== undefined ? editForm.type : (spotDetail.spot.type || "")}
-                          onChange={(e) => setEditForm({ ...editForm, type: e.target.value })}
-                          label="Type"
-                        >
-                          {SPOT_TYPES.map(type => (
-                            <MenuItem key={type} value={type}>{type}</MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-
-                      <TextField
-                        label="Description"
-                        value={editForm.description !== undefined ? editForm.description : (spotDetail.spot.description || "")}
-                        onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-                        multiline
-                        rows={4}
-                        size="small"
-                        variant="outlined"
-                        sx={{
-                          '& .MuiOutlinedInput-root': {
-                            backgroundColor: 'white',
-                            minHeight: 100
-                          }
-                        }}
-                      />
-                    </Box>
-                  </Paper>
-
-                  {/* Location Section */}
-                  <Paper elevation={0} sx={{ p: 2.5, bgcolor: 'grey.50', border: 1, borderColor: 'divider' }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
-                      Location
-                    </Typography>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                        <TextField
-                          label="Latitude"
-                          value={editForm.latitude !== undefined ? editForm.latitude : (spotDetail.spot.latitude || "")}
-                          onChange={(e) => setEditForm({ ...editForm, latitude: parseFloat(e.target.value) })}
-                          type="number"
-                          inputProps={{ step: 0.000001 }}
-                          size="small"
-                          variant="outlined"
-                          sx={{
-                            '& .MuiOutlinedInput-root': {
-                              backgroundColor: 'white',
-                              minHeight: 40
-                            }
-                          }}
-                        />
-                        <TextField
-                          label="Longitude"
-                          value={editForm.longitude !== undefined ? editForm.longitude : (spotDetail.spot.longitude || "")}
-                          onChange={(e) => setEditForm({ ...editForm, longitude: parseFloat(e.target.value) })}
-                          type="number"
-                          inputProps={{ step: 0.000001 }}
-                          size="small"
-                          variant="outlined"
-                          sx={{
-                            '& .MuiOutlinedInput-root': {
-                              backgroundColor: 'white',
-                              minHeight: 40
-                            }
-                          }}
-                        />
-                      </Box>
-                      <FormControl size="small" variant="outlined">
-                        <InputLabel>Region</InputLabel>
-                        <Select
-                          value={editForm.region !== undefined ? editForm.region : (spotDetail.spot.region || "")}
-                          onChange={(e) => setEditForm({ ...editForm, region: e.target.value })}
-                          label="Region"
-                        >
-                          <MenuItem value="">None</MenuItem>
-                          {VALID_REGIONS.map(region => (
-                            <MenuItem key={region} value={region}>{region}</MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                    </Box>
-                  </Paper>
-
-                  {/* Metadata Section */}
-                  <Paper elevation={0} sx={{ p: 2.5, bgcolor: 'grey.50', border: 1, borderColor: 'divider' }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
-                      Metadata
-                    </Typography>
-                    <Stack spacing={1.5}>
-                      <Box>
-                        <Typography variant="caption" color="text.secondary">Spot ID</Typography>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
-                          {spotDetail.spot.id}
-                        </Typography>
-                      </Box>
-                      {spotDetail.spot.uuid && (
-                        <Box>
-                          <Typography variant="caption" color="text.secondary">UUID</Typography>
-                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
-                            {spotDetail.spot.uuid}
-                          </Typography>
-                        </Box>
-                      )}
-                      {spotDetail.spot.ownerId && (
-                        <Box>
-                          <Typography variant="caption" color="text.secondary">Owner ID</Typography>
-                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
-                            {spotDetail.spot.ownerId}
-                          </Typography>
-                        </Box>
-                      )}
-                      <Stack direction="row" spacing={3}>
-                        {spotDetail.spot.createdAt && (
-                          <Box>
-                            <Typography variant="caption" color="text.secondary">Created</Typography>
-                            <Typography variant="body2">{formatDate(spotDetail.spot.createdAt)}</Typography>
-                          </Box>
-                        )}
-                        {spotDetail.spot.updatedAt && (
-                          <Box>
-                            <Typography variant="caption" color="text.secondary">Updated</Typography>
-                            <Typography variant="body2">{formatDate(spotDetail.spot.updatedAt)}</Typography>
-                          </Box>
-                        )}
-                      </Stack>
-                    </Stack>
-                  </Paper>
-
-                  {/* Rating & Comments Section */}
-                  {(spotDetail.ratingSummary.count > 0 || (spotDetail.comments && spotDetail.comments.length > 0)) && (
-                    <Paper elevation={0} sx={{ p: 2.5, bgcolor: 'grey.50', border: 1, borderColor: 'divider' }}>
-                      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
-                        User Feedback
-                      </Typography>
-                      
-                      {/* Rating */}
-                      <Box sx={{ mb: spotDetail.comments?.length > 0 ? 2 : 0 }}>
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                          Rating
-                        </Typography>
-                        <Typography variant="body2">
-                          {spotDetail.ratingSummary.average
-                            ? `⭐ ${spotDetail.ratingSummary.average.toFixed(1)} (${spotDetail.ratingSummary.count} ${spotDetail.ratingSummary.count === 1 ? 'rating' : 'ratings'})`
-                            : "No ratings yet"}
-                        </Typography>
-                      </Box>
-
-                      {/* Comments */}
-                      {spotDetail.comments && spotDetail.comments.length > 0 && (
-                        <Box>
-                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-                            Comments ({spotDetail.comments.length})
-                          </Typography>
-                          <Stack spacing={1}>
-                            {spotDetail.comments.slice(0, 5).map(comment => (
-                              <Paper key={comment.id} variant="outlined" sx={{ p: 1.5, bgcolor: 'white' }}>
-                                <Stack direction="row" spacing={1} alignItems="flex-start">
-                                  <Box sx={{ flexGrow: 1 }}>
-                                    <Typography variant="body2" sx={{ mb: 0.5 }}>
-                                      {comment.text}
-                                    </Typography>
-                                    <Typography variant="caption" color="text.secondary">
-                                      {comment.userName} • {formatDate(comment.createdAt)}
-                                    </Typography>
-                                  </Box>
-                                  <IconButton
-                                    size="small"
-                                    onClick={() => handleModerateComment(comment.id, "delete")}
-                                  >
-                                    <X size={14} />
-                                  </IconButton>
-                                </Stack>
-                              </Paper>
-                            ))}
-                            {spotDetail.comments.length > 5 && (
-                              <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center', pt: 0.5 }}>
-                                + {spotDetail.comments.length - 5} more comments
-                              </Typography>
-                            )}
-                          </Stack>
-                        </Box>
-                      )}
-                    </Paper>
-                  )}
-
-                  {/* Action Buttons */}
-                  <Stack spacing={1.5} sx={{ pt: 1 }}>
-                    <Button
-                      variant="contained"
-                      size="large"
-                      onClick={async () => {
-                        try {
-                          await handleSpotAction(selectedSpot.id, "update", {
-                            name: editForm.name !== undefined ? editForm.name : spotDetail.spot.name,
-                            description: editForm.description !== undefined ? editForm.description : spotDetail.spot.description,
-                            type: editForm.type !== undefined ? editForm.type : spotDetail.spot.type,
-                            region: editForm.region !== undefined ? editForm.region : spotDetail.spot.region,
-                            latitude: editForm.latitude !== undefined ? editForm.latitude : spotDetail.spot.latitude,
-                            longitude: editForm.longitude !== undefined ? editForm.longitude : spotDetail.spot.longitude,
-                          });
-                          setEditForm({});
-                          alert("Spot updated successfully");
-                        } catch (e) {
-                          alert(`Failed to update: ${e.message}`);
-                        }
-                      }}
-                      disabled={Object.keys(editForm).length === 0}
-                    >
-                      Save Changes
-                    </Button>
-                    
-                    <Stack direction="row" spacing={1}>
-                      <Button
-                        variant="outlined"
-                        size="medium"
-                        fullWidth
-                        onClick={() =>
-                          handleSpotAction(
-                            selectedSpot.id,
-                            selectedSpot.verified ? "unverify" : "verify"
-                          )
-                        }
-                      >
-                        {selectedSpot.verified ? "Unverify" : "Verify"}
-                      </Button>
-                      
-                      {!selectedSpot.deleted ? (
-                        <Button
-                          variant="outlined"
-                          color="error"
-                          size="medium"
-                          fullWidth
-                          onClick={() => handleSpotAction(selectedSpot.id, "softDelete")}
-                        >
-                          Delete
-                        </Button>
-                      ) : (
-                        <Button
-                          variant="outlined"
-                          color="success"
-                          size="medium"
-                          fullWidth
-                          onClick={() => handleSpotAction(selectedSpot.id, "restore")}
-                        >
-                          Restore
-                        </Button>
-                      )}
-                    </Stack>
-                  </Stack>
+              <>
+                <Divider sx={{ my: 2 }} />
+                
+                <Typography variant="overline" color="text.secondary">
+                  Location
+                </Typography>
+                <Stack spacing={0.5} sx={{ mb: 2 }}>
+                  <Typography variant="body2">
+                    Lat: {spotDetail.spot.latitude?.toFixed(6)}
+                  </Typography>
+                  <Typography variant="body2">
+                    Lng: {spotDetail.spot.longitude?.toFixed(6)}
+                  </Typography>
+                  <Typography variant="body2">
+                    Region: {spotDetail.spot.region || "—"}
+                  </Typography>
                 </Stack>
-              </Box>
+                
+                {spotDetail.spot.description && (
+                  <>
+                    <Typography variant="overline" color="text.secondary">
+                      Description
+                    </Typography>
+                    <Typography variant="body2" sx={{ mb: 2 }}>
+                      {spotDetail.spot.description}
+                    </Typography>
+                  </>
+                )}
+                
+                <Typography variant="overline" color="text.secondary">
+                  Rating
+                </Typography>
+                <Typography variant="body2" sx={{ mb: 2 }}>
+                  {spotDetail.ratingSummary.average
+                    ? `⭐ ${spotDetail.ratingSummary.average.toFixed(1)} (${spotDetail.ratingSummary.count} ratings)`
+                    : "No ratings yet"}
+                </Typography>
+                
+                {spotDetail.comments && spotDetail.comments.length > 0 && (
+                  <>
+                    <Typography variant="overline" color="text.secondary">
+                      Comments ({spotDetail.comments.length})
+                    </Typography>
+                    <Stack spacing={1} sx={{ mb: 2 }}>
+                      {spotDetail.comments.map(comment => (
+                        <Paper key={comment.id} sx={{ p: 1 }}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <Typography variant="caption" sx={{ flexGrow: 1 }}>
+                              {comment.text}
+                            </Typography>
+                            <IconButton
+                              size="small"
+                              onClick={() => handleModerateComment(comment.id, "delete")}
+                            >
+                              <X size={14} />
+                            </IconButton>
+                          </Stack>
+                        </Paper>
+                      ))}
+                    </Stack>
+                  </>
+                )}
+                
+                <Divider sx={{ my: 2 }} />
+                
+                <Typography variant="overline" color="text.secondary">
+                  Actions
+                </Typography>
+                <Stack spacing={1} sx={{ mt: 1 }}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => {
+                      setEditForm({
+                        name: selectedSpot.name,
+                        description: selectedSpot.description || "",
+                        type: selectedSpot.type,
+                        region: selectedSpot.region || "",
+                        verified: selectedSpot.verified || false,
+                      });
+                      setEditDialogOpen(true);
+                    }}
+                  >
+                    Edit
+                  </Button>
+                  
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() =>
+                      handleSpotAction(
+                        selectedSpot.id,
+                        selectedSpot.verified ? "unverify" : "verify"
+                      )
+                    }
+                  >
+                    {selectedSpot.verified ? "Unverify" : "Verify"}
+                  </Button>
+                  
+                  {!selectedSpot.deleted ? (
+                    <Button
+                      variant="outlined"
+                      color="error"
+                      size="small"
+                      onClick={() => handleSpotAction(selectedSpot.id, "softDelete")}
+                    >
+                      Soft Delete
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outlined"
+                      color="success"
+                      size="small"
+                      onClick={() => handleSpotAction(selectedSpot.id, "restore")}
+                    >
+                      Restore
+                    </Button>
+                  )}
+                </Stack>
+              </>
             ) : null}
           </Box>
         )}
@@ -2452,81 +1697,6 @@ function Spots() {
               Run Migration ({migrateResult.migrated} spots)
             </Button>
           )}
-        </DialogActions>
-      </Dialog>
-      
-      {/* Bulk Snapshot Generation Dialog */}
-      <Dialog
-        open={snapshotDialogOpen}
-        onClose={() => !snapshotProgress.isProcessing && setSnapshotDialogOpen(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>
-          Bulk Snapshot Generation
-        </DialogTitle>
-        <DialogContent>
-          <Box sx={{ mb: 2 }}>
-            <Typography variant="body2" color="text.secondary" gutterBottom>
-              Spots without snapshots: {snapshotProgress.total}
-            </Typography>
-            <Typography variant="body2" color="text.secondary" gutterBottom>
-              Processed: {snapshotProgress.processed} / {snapshotProgress.total}
-            </Typography>
-            <Typography variant="body2" color="success.main" gutterBottom>
-              Successful: {snapshotProgress.successful}
-            </Typography>
-            <Typography variant="body2" color="error.main" gutterBottom>
-              Failed: {snapshotProgress.failed}
-            </Typography>
-          </Box>
-          
-          <LinearProgress 
-            variant="determinate" 
-            value={snapshotProgress.total > 0 ? (snapshotProgress.processed / snapshotProgress.total) * 100 : 0}
-            sx={{ mb: 2 }}
-          />
-          
-          {snapshotProgress.errors.length > 0 && (
-            <Box sx={{ mt: 2, maxHeight: 200, overflowY: 'auto' }}>
-              <Typography variant="subtitle2" color="error" gutterBottom>
-                Errors:
-              </Typography>
-              {snapshotProgress.errors.map((err, idx) => (
-                <Typography key={idx} variant="caption" display="block" color="text.secondary">
-                  {err.spotName || err.spotId}: {err.error}
-                </Typography>
-              ))}
-            </Box>
-          )}
-          
-          {!snapshotProgress.isProcessing && snapshotProgress.processed > 0 && (
-            <Alert severity="success" sx={{ mt: 2 }}>
-              Snapshot generation complete! {snapshotProgress.successful} successful, {snapshotProgress.failed} failed.
-            </Alert>
-          )}
-        </DialogContent>
-        <DialogActions>
-          {snapshotProgress.isProcessing && (
-            <Button 
-              onClick={() => {
-                setSnapshotProgress(prev => ({ ...prev, cancelRequested: true }));
-              }}
-              color="error"
-              disabled={snapshotProgress.cancelRequested}
-            >
-              {snapshotProgress.cancelRequested ? 'Cancelling...' : 'Cancel'}
-            </Button>
-          )}
-          <Button 
-            onClick={() => {
-              setSnapshotDialogOpen(false);
-              loadSpots();
-            }}
-            disabled={snapshotProgress.isProcessing}
-          >
-            Close
-          </Button>
         </DialogActions>
       </Dialog>
     </React.Fragment>

@@ -72,6 +72,10 @@ const manageSection = [
         href: "/manage/map/ais",
         title: "AIS",
       },
+      {
+        href: "/maps/tile-management",
+        title: "Tile Management",
+      },
     ],
   },
   {

@@ -296,6 +296,10 @@ const elementsSection = [
     title: "Maps",
     children: [
       {
+        href: "/maps/tile-management",
+        title: "Tile Management",
+      },
+      {
         href: "/maps/vector-maps",
         title: "Vector Maps",
       },

@@ -70,7 +70,7 @@ const Sidebar = ({ items, showFooter = true, ...rest }) => {
     <Drawer variant="permanent" {...rest}>
       <Brand component={NavLink} to="/">
         <Box ml={1}>
-          CruisaPalooza Admin
+          CruisaPalooza Console
         </Box>
       </Brand>
       <SidebarNav items={items} />

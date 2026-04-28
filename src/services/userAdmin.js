@@ -96,6 +96,16 @@ export async function restoreUser(uid) {
   await callFunction("manageUser", { uid, action: "restore" });
 }
 
+/** Force-rename a user's CP ID, bypassing cooldown (admin only). */
+export async function adminForceCpidRename(uid, cpid, reason) {
+  return await callFunction("adminForceCpidRename", { uid, cpid, reason });
+}
+
+/** Release a reserved CP ID so it can be claimed again (admin only). */
+export async function adminReleaseReservedCpid(cpid, reason) {
+  return await callFunction("adminReleaseReservedCpid", { cpid, reason });
+}
+
 /** Fetch RTDB profile + activity counts for a single user. */
 export async function getUserDetail(uid) {
   return await callFunction("getUserDetail", { uid });

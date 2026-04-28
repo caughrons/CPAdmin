@@ -47,16 +47,19 @@ import {
   getUserDetail,
   getUserAdsDisabled,
   setUserAdsDisabled,
+  adminForceCpidRename,
+  adminReleaseReservedCpid,
 } from "@/services/userAdmin";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const ROLES = ["user", "sponsor", "partner", "admin"];
+const ROLES = ["user", "sponsor", "partner", "official", "admin"];
 
 const ROLE_COLORS = {
   user: "default",
   sponsor: "info",
   partner: "success",
+  official: "warning",
   admin: "error",
 };
 
@@ -64,6 +67,7 @@ const ROLE_LABELS = {
   user: "User",
   sponsor: "Sponsor",
   partner: "Partner",
+  official: "Official",
   admin: "Admin",
 };
 
@@ -219,6 +223,103 @@ function RoleDialog({ open, user, onConfirm, onClose, loading }) {
 
 // ── Detail Drawer ────────────────────────────────────────────────────────────
 
+// ── Force Rename CP ID Dialog ─────────────────────────────────────────────────
+
+function CpidRenameDialog({ open, user, currentCpid, onConfirm, onClose, loading }) {
+  const [newCpid, setNewCpid] = useState("");
+  const [reason, setReason] = useState("");
+
+  useEffect(() => { if (!open) { setNewCpid(""); setReason(""); } }, [open]);
+
+  const normalized = newCpid.trim().toLowerCase().replace(/^~/, "");
+  const valid = /^[a-z0-9_]{4,20}$/.test(normalized);
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>Force Rename CP ID</DialogTitle>
+      <DialogContent>
+        <DialogContentText sx={{ mb: 2 }}>
+          Override <strong>{user?.displayName ?? user?.email}</strong>'s CP ID.
+          Current: <strong>{currentCpid ? `~${currentCpid}` : "none"}</strong>. Cooldown bypassed.
+        </DialogContentText>
+        <TextField
+          autoFocus fullWidth size="small" sx={{ mb: 2 }}
+          label="New CP ID" placeholder="e.g. sailorjohn"
+          value={newCpid}
+          onChange={(e) => setNewCpid(e.target.value)}
+          helperText={newCpid && !valid ? "4–20 chars: lowercase, numbers, underscores only" : " "}
+          error={!!newCpid && !valid}
+        />
+        <TextField
+          fullWidth size="small"
+          label="Reason (optional)"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        />
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={loading}>Cancel</Button>
+        <Button
+          variant="contained" color="warning"
+          disabled={!valid || loading}
+          onClick={() => onConfirm(normalized, reason)}
+          startIcon={loading ? <CircularProgress size={14} color="inherit" /> : null}
+        >
+          Force Rename
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+// ── Release Reserved CP ID Dialog ─────────────────────────────────────────────
+
+function CpidReleaseDialog({ open, onConfirm, onClose, loading }) {
+  const [cpid, setCpid] = useState("");
+  const [reason, setReason] = useState("");
+
+  useEffect(() => { if (!open) { setCpid(""); setReason(""); } }, [open]);
+
+  const normalized = cpid.trim().toLowerCase().replace(/^~/, "");
+  const valid = /^[a-z0-9_]{4,20}$/.test(normalized);
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>Release Reserved CP ID</DialogTitle>
+      <DialogContent>
+        <DialogContentText sx={{ mb: 2 }}>
+          Release a reserved CP ID so it can be claimed by another user.
+        </DialogContentText>
+        <TextField
+          autoFocus fullWidth size="small" sx={{ mb: 2 }}
+          label="CP ID to release" placeholder="e.g. oldhandle"
+          value={cpid}
+          onChange={(e) => setCpid(e.target.value)}
+        />
+        <TextField
+          fullWidth size="small"
+          label="Reason (optional)"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        />
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={loading}>Cancel</Button>
+        <Button
+          variant="contained" color="success"
+          disabled={!valid || loading}
+          onClick={() => onConfirm(normalized, reason)}
+          startIcon={loading ? <CircularProgress size={14} color="inherit" /> : null}
+        >
+          Release
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+// ── Detail Drawer ────────────────────────────────────────────────────────────
+
 function DetailDrawer({ user, open, onClose, onAction }) {
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -228,6 +329,8 @@ function DetailDrawer({ user, open, onClose, onAction }) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
   const [adsDisabled, setAdsDisabled] = useState(false);
+  const [cpidRenameOpen, setCpidRenameOpen] = useState(false);
+  const [cpidReleaseOpen, setCpidReleaseOpen] = useState(false);
 
   useEffect(() => {
     if (!open || !user) { setDetail(null); return; }
@@ -368,6 +471,27 @@ function DetailDrawer({ user, open, onClose, onAction }) {
 
         <Divider sx={{ mb: 2 }} />
 
+        {/* CP ID */}
+        <Typography variant="overline" color="text.secondary">CP ID</Typography>
+        <Stack spacing={1} mt={1} mb={2}>
+          <Button
+            fullWidth variant="outlined" color="warning"
+            onClick={() => setCpidRenameOpen(true)}
+            disabled={actionLoading}
+          >
+            Force Rename CP ID
+          </Button>
+          <Button
+            fullWidth variant="outlined" color="success"
+            onClick={() => setCpidReleaseOpen(true)}
+            disabled={actionLoading}
+          >
+            Release Reserved CP ID
+          </Button>
+        </Stack>
+
+        <Divider sx={{ mb: 2 }} />
+
         {/* Actions */}
         <Typography variant="overline" color="text.secondary">Actions</Typography>
         <Stack spacing={1} mt={1}>
@@ -396,6 +520,34 @@ function DetailDrawer({ user, open, onClose, onAction }) {
           )}
         </Stack>
       </Drawer>
+
+      {/* CP ID force rename dialog */}
+      <CpidRenameDialog
+        open={cpidRenameOpen}
+        user={user}
+        currentCpid={detail?.profile?.cpid}
+        loading={actionLoading}
+        onClose={() => setCpidRenameOpen(false)}
+        onConfirm={(newCpid, reason) =>
+          handleAction(
+            () => adminForceCpidRename(user.uid, newCpid, reason),
+            () => setCpidRenameOpen(false),
+          )
+        }
+      />
+
+      {/* CP ID release reserved dialog */}
+      <CpidReleaseDialog
+        open={cpidReleaseOpen}
+        loading={actionLoading}
+        onClose={() => setCpidReleaseOpen(false)}
+        onConfirm={(cpid, reason) =>
+          handleAction(
+            () => adminReleaseReservedCpid(cpid, reason),
+            () => setCpidReleaseOpen(false),
+          )
+        }
+      />
 
       {/* Role dialog */}
       <RoleDialog

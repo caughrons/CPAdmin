@@ -24,8 +24,7 @@ import Ecommerce from "@/pages/admin/Ecommerce";
 
 // Admin pages — Manage
 import Users from "@/pages/admin/manage/Users";
-import Partners from "@/pages/admin/manage/Partners";
-import Sponsors from "@/pages/admin/manage/Sponsors";
+import Communities from "@/pages/admin/manage/Communities";
 import Ads from "@/pages/admin/manage/Ads";
 import Feedback from "@/pages/admin/manage/Feedback";
 import Spots from "@/pages/admin/manage/Spots";
@@ -67,8 +66,9 @@ const routes = [
         children: [
           { path: "", element: <Navigate to="/manage/users" replace /> },
           { path: "users", element: <Users /> },
-          { path: "partners", element: <Partners /> },
-          { path: "sponsors", element: <Sponsors /> },
+          { path: "communities", element: <Communities /> },
+          { path: "partners", element: <Navigate to="/manage/communities" replace /> },
+          { path: "sponsors", element: <Navigate to="/manage/communities" replace /> },
           { path: "ads", element: <Ads /> },
           { path: "feedback", element: <Feedback /> },
           { path: "spots", element: <Spots /> },

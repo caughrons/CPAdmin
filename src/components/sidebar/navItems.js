@@ -4,8 +4,7 @@ import {
   DollarSign,
   ShoppingBag,
   Users,
-  Handshake,
-  Star,
+  Building2,
   Megaphone,
   MessageSquare,
   MapPin,
@@ -24,14 +23,9 @@ const manageSection = [
     title: "Users",
   },
   {
-    href: "/manage/partners",
-    icon: Handshake,
-    title: "Partners",
-  },
-  {
-    href: "/manage/sponsors",
-    icon: Star,
-    title: "Sponsors",
+    href: "/manage/communities",
+    icon: Building2,
+    title: "Communities",
   },
   {
     href: "/manage/ads",

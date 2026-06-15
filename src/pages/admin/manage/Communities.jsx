@@ -14,6 +14,7 @@ import {
   Paper,
   Select,
   Stack,
+  Switch,
   Tab,
   Table,
   TableBody,
@@ -22,6 +23,7 @@ import {
   TableRow,
   Tabs,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { RefreshCw } from "lucide-react";
@@ -41,7 +43,7 @@ const TYPE_COLORS = {
 
 // ── Shared table for one community type ──────────────────────────────────────
 
-function CommunityTable({ targetType, groups, loading, onTypeChange, savedId }) {
+function CommunityTable({ targetType, groups, loading, onTypeChange, onOwnerOnlyChange, savedId }) {
   const [search, setSearch] = useState("");
 
   const filtered = groups.filter((g) => {
@@ -88,6 +90,13 @@ function CommunityTable({ targetType, groups, loading, onTypeChange, savedId }) 
                 <TableCell>Privacy</TableCell>
                 <TableCell>Members</TableCell>
                 <TableCell>Group Type</TableCell>
+                {(targetType === "partner" || targetType === "sponsor") && (
+                  <TableCell>
+                    <Tooltip title="Owner-only posts: only the community owner can create posts. Members can still comment.">
+                      <span>Owner-only Posts</span>
+                    </Tooltip>
+                  </TableCell>
+                )}
               </TableRow>
             </TableHead>
             <TableBody>
@@ -150,6 +159,15 @@ function CommunityTable({ targetType, groups, loading, onTypeChange, savedId }) 
                       </Select>
                     </Stack>
                   </TableCell>
+                  {(targetType === "partner" || targetType === "sponsor") && (
+                    <TableCell>
+                      <Switch
+                        size="small"
+                        checked={group.ownerOnlyPosts === true || (group.ownerOnlyPosts === null)}
+                        onChange={(e) => onOwnerOnlyChange(group, e.target.checked)}
+                      />
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
@@ -186,6 +204,7 @@ function Communities() {
         privacy: val.privacy ?? "—",
         createdBy: val.createdBy ?? val.ownerId ?? "—",
         memberCount: val.memberCount ?? 0,
+        ownerOnlyPosts: val.ownerOnlyPosts ?? null,
       }));
       list.sort((a, b) => a.name.localeCompare(b.name));
       setAllGroups(list);
@@ -203,6 +222,22 @@ function Communities() {
   const handleTypeChange = (group, newType) => {
     if (newType === group.groupType) return;
     setConfirmGroup({ ...group, newType });
+  };
+
+  const handleOwnerOnlyChange = async (group, newValue) => {
+    try {
+      await rtdb.ref(`feed_groups/${group.id}/ownerOnlyPosts`).set(newValue);
+      setAllGroups((prev) =>
+        prev.map((g) =>
+          g.id === group.id ? { ...g, ownerOnlyPosts: newValue } : g
+        )
+      );
+      setSavedId(group.id);
+      setTimeout(() => setSavedId(null), 2000);
+    } catch (e) {
+      console.error("Failed to update ownerOnlyPosts:", e);
+      alert("Save failed: " + e.message);
+    }
   };
 
   const confirmSave = async () => {
@@ -266,6 +301,7 @@ function Communities() {
           groups={userGroups}
           loading={loading}
           onTypeChange={handleTypeChange}
+          onOwnerOnlyChange={handleOwnerOnlyChange}
           savedId={savedId}
         />
       )}
@@ -275,6 +311,7 @@ function Communities() {
           groups={partnerGroups}
           loading={loading}
           onTypeChange={handleTypeChange}
+          onOwnerOnlyChange={handleOwnerOnlyChange}
           savedId={savedId}
         />
       )}
@@ -284,6 +321,7 @@ function Communities() {
           groups={sponsorGroups}
           loading={loading}
           onTypeChange={handleTypeChange}
+          onOwnerOnlyChange={handleOwnerOnlyChange}
           savedId={savedId}
         />
       )}

@@ -35,6 +35,7 @@ import MapAdmin from "@/pages/admin/manage/MapAdmin";
 import AIS from "@/pages/admin/manage/AIS";
 import AdminChat from "@/pages/admin/manage/Chat";
 import MigrateSpots from "@/pages/admin/MigrateSpots";
+
 import TestFirestoreQuery from "@/pages/admin/TestFirestoreQuery";
 import TileManagement from "@/pages/maps/TileManagement";
 
@@ -60,6 +61,7 @@ const routes = [
       { path: "hosting", element: <Hosting /> },
       { path: "maps/tile-management", element: <TileManagement /> },
       { path: "migrate-spots", element: <MigrateSpots /> },
+
       { path: "test-firestore-query", element: <TestFirestoreQuery /> },
       {
         path: "manage",

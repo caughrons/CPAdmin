@@ -14,6 +14,7 @@ import {
   Map,
   MessageCircle,
   Server,
+  ShieldAlert,
 } from "lucide-react";
 
 const manageSection = [
@@ -56,6 +57,11 @@ const manageSection = [
     href: "/manage/waypoints",
     icon: Navigation,
     title: "Waypoints",
+  },
+  {
+    href: "/manage/potential-spam",
+    icon: ShieldAlert,
+    title: "Potential Spam",
   },
   {
     href: "/manage/map",

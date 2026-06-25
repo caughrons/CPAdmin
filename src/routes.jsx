@@ -31,6 +31,7 @@ import Spots from "@/pages/admin/manage/Spots";
 import Rendezvous from "@/pages/admin/manage/Rendezvous";
 import News from "@/pages/admin/manage/News";
 import Waypoints from "@/pages/admin/manage/Waypoints";
+import PotentialSpam from "@/pages/admin/manage/PotentialSpam";
 import MapAdmin from "@/pages/admin/manage/MapAdmin";
 import AIS from "@/pages/admin/manage/AIS";
 import AdminChat from "@/pages/admin/manage/Chat";
@@ -77,6 +78,7 @@ const routes = [
           { path: "rendezvous", element: <Rendezvous /> },
           { path: "news", element: <News /> },
           { path: "waypoints", element: <Waypoints /> },
+          { path: "potential-spam", element: <PotentialSpam /> },
           { path: "map", element: <MapAdmin /> },
           { path: "map/ais", element: <AIS /> },
           { path: "chat", element: <AdminChat /> },

@@ -354,7 +354,12 @@ function Spots() {
   
   const handleReviewRequest = async (action) => {
     if (!selectedRequest) return;
-    
+
+    // Blur before state changes to prevent aria-hidden-on-focused-element warning
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
     try {
       await reviewChangeRequest(
         selectedRequest.id,
@@ -973,9 +978,9 @@ function Spots() {
       headerName: "Spot Name",
       flex: 1,
       minWidth: 200,
-      valueGetter: (params) =>
-        params.row.proposedData?.name ||
-        params.row.originalData?.name ||
+      valueGetter: (value, row) =>
+        row.proposedData?.name ||
+        row.originalData?.name ||
         "—",
     },
     {
@@ -2122,9 +2127,58 @@ function Spots() {
                   </Typography>
                   <Paper sx={{ p: 2, bgcolor: "warning.light" }}>
                     <pre style={{ margin: 0, fontSize: "0.875rem" }}>
-                      {JSON.stringify(selectedRequest.proposedData, null, 2)}
+                      {JSON.stringify(
+                        { ...selectedRequest.proposedData, photos: undefined },
+                        null,
+                        2
+                      )}
                     </pre>
                   </Paper>
+                  {selectedRequest.proposedData?.photos?.length > 0 && (
+                    <Box sx={{ mt: 1 }}>
+                      <Typography variant="subtitle2" gutterBottom>
+                        Proposed Photos ({selectedRequest.proposedData.photos.length}):
+                      </Typography>
+                      <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+                        {selectedRequest.proposedData.photos.map((photo, idx) =>
+                          photo.r2_key ? (
+                            <Box
+                              key={idx}
+                              component="img"
+                              src={`https://cruisapalooza.com/${photo.r2_key}`}
+                              alt={`Photo ${idx + 1}`}
+                              sx={{
+                                width: 120,
+                                height: 90,
+                                objectFit: "cover",
+                                borderRadius: 1,
+                                border: "1px solid",
+                                borderColor: "divider",
+                              }}
+                              onError={(e) => { e.target.style.display = "none"; }}
+                            />
+                          ) : (
+                            <Box
+                              key={idx}
+                              sx={{
+                                width: 120,
+                                height: 90,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                bgcolor: "grey.200",
+                                borderRadius: 1,
+                                fontSize: "0.75rem",
+                                color: "text.secondary",
+                              }}
+                            >
+                              Uploading…
+                            </Box>
+                          )
+                        )}
+                      </Box>
+                    </Box>
+                  )}
                 </Box>
               )}
               

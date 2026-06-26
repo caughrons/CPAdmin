@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Join CruisaPalooza</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0d2a4a;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      background: #FFFFFF;
+      border: 1px solid #E5E7EB;
+      border-radius: 20px;
+      padding: 40px 32px;
+      max-width: 420px;
+      width: 100%;
+      text-align: center;
+    }
+    h1 { font-size: 26px; font-weight: 700; margin-bottom: 12px; color: #1C2660; }
+    p  { font-size: 16px; line-height: 1.6; color: #444B6E; margin-bottom: 28px; }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 16px;
+      border-radius: 12px;
+      font-size: 17px;
+      font-weight: 600;
+      text-decoration: none;
+      margin-bottom: 12px;
+      cursor: pointer;
+      border: none;
+    }
+    .btn-primary { background: #9eb4dd; color: #0d2a4a; }
+    .btn-secondary {
+      background: transparent;
+      border: 1.5px solid #9eb4dd;
+      color: #1C2660;
+    }
+    .store-badges {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    .store-badge {
+      height: 44px;
+      border-radius: 8px;
+    }
+    .footer {
+      margin-top: 32px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.35);
+    }
+  </style>
+</head>
+<body>
+  <!--
+    ══════════════════════════════════════════════════════════════════
+    GO-LIVE CHECKLIST — remove this banner and complete these steps
+    before the public app launch:
+
+    1. Remove the pre-release notice banner below (the <div id="prereleaseBanner"> block).
+    2. Replace App Store link href with real App Store ID (search for id0000000000).
+    3. Replace assetlinks.json SHA-256 placeholder with the production
+       release keystore fingerprint:
+         keytool -list -v -keystore <your-release.keystore>
+    4. Verify AASA with Apple's validator:
+         https://branch.io/resources/aasa-validator/
+    5. Verify assetlinks.json with Google's validator:
+         https://developers.google.com/digital-asset-links/tools/generator
+    6. Confirm Universal Links (iOS) and App Links (Android) open the
+       installed app end-to-end on a real device before launch day.
+    ══════════════════════════════════════════════════════════════════
+  -->
+  <div id="prereleaseBanner" style="
+    background: rgba(255,200,0,0.15);
+    border: 1px solid rgba(255,200,0,0.4);
+    border-radius: 12px;
+    padding: 12px 20px;
+    margin-bottom: 20px;
+    max-width: 420px;
+    width: 100%;
+    text-align: center;
+    font-size: 13px;
+    color: rgba(255,255,255,0.75);
+  ">
+    Pre-release test build &mdash; the app is not yet available in stores.
+  </div>
+
+  <div class="card">
+    <img src="/logomast_sm.png" alt="CruisaPalooza" style="width:200px;max-width:80%;height:auto;margin-bottom:20px;" />
+    <h1>Join CruisaPalooza</h1>
+    <p id="message">A fellow cruiser has invited you to join CruisaPalooza — the app for sailors, cruisers, and live-aboards.</p>
+
+    <!-- Mobile: download button + matching store badge -->
+    <button class="btn btn-primary" id="getAppBtn" style="display:none;">Get the App</button>
+    <a class="btn btn-secondary" href="https://app.cruisapalooza.com" id="openAppBtn" style="display:none;">Open in App</a>
+
+    <div class="store-badges">
+      <a id="appStoreLink" href="https://apps.apple.com/app/cruisapalooza/id0000000000" style="display:none;">
+        <img class="store-badge" src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" alt="Download on the App Store">
+      </a>
+      <a id="playStoreLink" href="https://play.google.com/store/apps/details?id=com.cruisapalooza.app" style="display:none;">
+        <img class="store-badge" src="https://upload.wikimedia.org/wikipedia/commons/7/78/Google_Play_Store_badge_EN.svg" alt="Get it on Google Play">
+      </a>
+    </div>
+
+    <!-- Desktop: no-app message -->
+    <div id="desktopMsg" style="display:none;padding:16px;background:#F4F7FB;border-radius:12px;font-size:15px;line-height:1.6;color:#444B6E;">
+      Open this link on your iPhone or Android device to download CruisaPalooza and accept your invite.
+    </div>
+  </div>
+
+  <div class="footer">CruisaPalooza &middot; Life on the water</div>
+
+  <script>
+    const isIOS     = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    const isAndroid = /Android/.test(navigator.userAgent);
+    const isMobile  = isIOS || isAndroid;
+
+    const APP_STORE_URL  = 'https://apps.apple.com/app/cruisapalooza/id0000000000';
+    const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.cruisapalooza.app';
+
+    if (isMobile) {
+      // Show the download button and the matching store badge only.
+      const getBtn = document.getElementById('getAppBtn');
+      getBtn.style.display = 'block';
+      if (isIOS) {
+        getBtn.textContent = 'Download on the App Store';
+        document.getElementById('appStoreLink').style.display = 'inline-block';
+      } else {
+        getBtn.textContent = 'Get it on Google Play';
+        document.getElementById('playStoreLink').style.display = 'inline-block';
+      }
+
+      // Show "Open in App" if a token is present (fallback for already-installed app).
+      const token = new URLSearchParams(window.location.search).get('t');
+      if (token) {
+        const openBtn = document.getElementById('openAppBtn');
+        openBtn.href = 'https://app.cruisapalooza.com/invite?t=' + encodeURIComponent(token);
+        openBtn.style.display = 'block';
+      }
+
+      // On tap: save invite URL to clipboard for deferred deep link recovery, then go to store.
+      document.getElementById('getAppBtn').addEventListener('click', function () {
+        try { navigator.clipboard.writeText(window.location.href).catch(() => {}); } catch (_) {}
+        window.location.href = isIOS ? APP_STORE_URL : PLAY_STORE_URL;
+      });
+    } else {
+      // Desktop: no store buttons — just tell them to use their phone.
+      document.getElementById('desktopMsg').style.display = 'block';
+    }
+  </script>
+</body>
+</html>

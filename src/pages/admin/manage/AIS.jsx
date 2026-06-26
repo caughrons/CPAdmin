@@ -71,12 +71,17 @@ function WorldMap({ vessels, onMapMoveEnd }) {
   const map = useRef(null);
   const moveEndTimeout = useRef(null);
   const onMapMoveEndRef = useRef(onMapMoveEnd);
-  const colorMap = { ais: "#2196f3", gps: "#4caf50", merged: "#e040fb" };
+  const vesselsRef = useRef(vessels);
 
-  // Keep callback ref up to date
+
+  // Keep refs current
   useEffect(() => {
     onMapMoveEndRef.current = onMapMoveEnd;
   }, [onMapMoveEnd]);
+
+  useEffect(() => {
+    vesselsRef.current = vessels;
+  }, [vessels]);
 
   // Initialize map
   useEffect(() => {
@@ -94,14 +99,22 @@ function WorldMap({ vessels, onMapMoveEnd }) {
     map.current.addControl(new mapboxgl.FullscreenControl(), "top-right");
     map.current.addControl(new mapboxgl.ScaleControl(), "bottom-left");
 
+    const buildGeoJson = (list) => ({
+      type: "FeatureCollection",
+      features: list
+        .filter((v) => v.lat != null && v.lng != null)
+        .map((vessel) => ({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [vessel.lng, vessel.lat] },
+          properties: { source: vessel.source },
+        })),
+    });
+
     // Add vessel source and layer when map loads
     map.current.on("load", () => {
       map.current.addSource("vessels", {
         type: "geojson",
-        data: {
-          type: "FeatureCollection",
-          features: [],
-        },
+        data: buildGeoJson(vesselsRef.current),
       });
 
       map.current.addLayer({
@@ -155,26 +168,19 @@ function WorldMap({ vessels, onMapMoveEnd }) {
   useEffect(() => {
     if (!map.current || !map.current.isStyleLoaded()) return;
 
-    const dots = vessels.filter((v) => v.lat != null && v.lng != null);
-
-    const geojson = {
-      type: "FeatureCollection",
-      features: dots.map((vessel) => ({
-        type: "Feature",
-        geometry: {
-          type: "Point",
-          coordinates: [vessel.lng, vessel.lat],
-        },
-        properties: {
-          source: vessel.source,
-        },
-      })),
-    };
-
     const source = map.current.getSource("vessels");
-    if (source) {
-      source.setData(geojson);
-    }
+    if (!source) return;
+
+    source.setData({
+      type: "FeatureCollection",
+      features: vessels
+        .filter((v) => v.lat != null && v.lng != null)
+        .map((vessel) => ({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [vessel.lng, vessel.lat] },
+          properties: { source: vessel.source },
+        })),
+    });
   }, [vessels]);
 
   return (

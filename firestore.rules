@@ -12,6 +12,11 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Admin message history (draft/live/unpublished) — admin-only.
+    match /admin_messages/{messageId} {
+      allow read, write: if isAdmin();
+    }
+
     // All collections — admin full read, write restricted per collection
     match /{document=**} {
       allow read: if isAdmin();

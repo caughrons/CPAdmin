@@ -15,11 +15,10 @@ import {
 import firebase from "firebase/app";
 import "firebase/auth";
 import {
-  getAdminMessageConfig,
+  listMessages,
   saveDraft,
-  publishDraft,
-  setLiveUntil,
-  unpublish,
+  publishMessage,
+  unpublishLive,
 } from "@/services/adminMessagesAdmin";
 
 function formatDate(date) {
@@ -27,9 +26,15 @@ function formatDate(date) {
   return date.toLocaleString();
 }
 
+const STATUS_CHIP = {
+  live: { label: "LIVE", color: "success" },
+  draft: { label: "DRAFT", color: "default" },
+  unpublished: { label: "UNPUBLISHED", color: "warning" },
+};
+
 function AdminMessages() {
-  const [config, setConfig] = useState(null);
-  const [draftBody, setDraftBody] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [body, setBody] = useState("");
   const [liveUntilInput, setLiveUntilInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -42,19 +47,7 @@ function AdminMessages() {
     setLoading(true);
     setError(null);
     try {
-      const data = await getAdminMessageConfig();
-      setConfig(data);
-      setDraftBody(data.draftBody ?? "");
-      if (data.liveUntil) {
-        // Format as datetime-local value: "YYYY-MM-DDTHH:mm"
-        const d = data.liveUntil;
-        const pad = (n) => String(n).padStart(2, "0");
-        setLiveUntilInput(
-          `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-        );
-      } else {
-        setLiveUntilInput("");
-      }
+      setMessages(await listMessages());
     } catch (e) {
       setError(e?.message ?? String(e));
     } finally {
@@ -74,12 +67,22 @@ function AdminMessages() {
     setTimeout(() => setSuccessMsg(null), 4000);
   };
 
+  const clearEditor = () => {
+    setBody("");
+    setLiveUntilInput("");
+  };
+
   const handleSaveDraft = async () => {
+    if (!body.trim()) {
+      setError("Message is empty — nothing to save.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      await saveDraft(draftBody, updatedBy);
+      await saveDraft(body, updatedBy);
       flash("Draft saved.");
+      clearEditor();
       await load();
     } catch (e) {
       setError(e?.message ?? String(e));
@@ -89,21 +92,20 @@ function AdminMessages() {
   };
 
   const handlePublish = async () => {
-    if (!draftBody.trim()) {
-      setError("Draft is empty — nothing to publish.");
+    if (!body.trim()) {
+      setError("Message is empty — nothing to publish.");
       return;
     }
     setPublishing(true);
     setError(null);
     try {
-      // Save current draft text first, then publish
-      await saveDraft(draftBody, updatedBy);
-      await publishDraft(updatedBy);
-      // Apply liveUntil if set
-      if (liveUntilInput) {
-        await setLiveUntil(new Date(liveUntilInput));
-      }
+      await publishMessage(
+        body,
+        updatedBy,
+        liveUntilInput ? new Date(liveUntilInput) : null
+      );
       flash("Published. Users will see the new message on next launch/resume.");
+      clearEditor();
       await load();
     } catch (e) {
       setError(e?.message ?? String(e));
@@ -116,7 +118,7 @@ function AdminMessages() {
     setUnpublishing(true);
     setError(null);
     try {
-      await unpublish();
+      await unpublishLive();
       flash("Unpublished. Message will no longer appear.");
       await load();
     } catch (e) {
@@ -126,7 +128,6 @@ function AdminMessages() {
     }
   };
 
-  const isLive = config && config.liveBody && config.liveVersion > 0;
   const isBusy = saving || publishing || unpublishing;
 
   return (
@@ -139,90 +140,86 @@ function AdminMessages() {
           </Typography>
           <Typography variant="body2" color="text.secondary">
             Broadcast a message to all users. Users see it as a modal on next
-            launch or resume until they dismiss it. Publishing a new version
-            re-shows the message to everyone.
+            launch or resume until they dismiss it. Each save or publish
+            creates a new message below — the editor clears afterward so you
+            can compose the next one.
           </Typography>
         </Box>
 
         {error && <Alert severity="error">{error}</Alert>}
         {successMsg && <Alert severity="success">{successMsg}</Alert>}
 
+        {/* Editor */}
+        <Paper sx={{ p: 3 }}>
+          <Stack spacing={2}>
+            <Typography variant="subtitle1" fontWeight={600}>
+              New Message
+            </Typography>
+            <TextField
+              label="Message body"
+              multiline
+              minRows={4}
+              maxRows={12}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="Write your message here…"
+              fullWidth
+            />
+            <TextField
+              label="Expires at (optional)"
+              type="datetime-local"
+              value={liveUntilInput}
+              onChange={(e) => setLiveUntilInput(e.target.value)}
+              helperText="Leave blank for no expiry. Only applies when publishing."
+              InputLabelProps={{ shrink: true }}
+              sx={{ maxWidth: 320 }}
+            />
+            <Box display="flex" gap={1} flexWrap="wrap">
+              <Button variant="outlined" onClick={handleSaveDraft} disabled={isBusy}>
+                {saving ? "Saving…" : "Save Draft"}
+              </Button>
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={handlePublish}
+                disabled={isBusy}
+              >
+                {publishing ? "Publishing…" : "Make Live"}
+              </Button>
+            </Box>
+          </Stack>
+        </Paper>
+
+        <Divider />
+
+        {/* Message history */}
+        <Typography variant="subtitle1" fontWeight={600}>
+          Messages
+        </Typography>
         {loading ? (
           <Box display="flex" alignItems="center" gap={1}>
             <CircularProgress size={18} />
             <Typography variant="body2">Loading…</Typography>
           </Box>
+        ) : messages.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            No messages yet. Save a draft or publish one above.
+          </Typography>
         ) : (
-          <Stack spacing={3}>
-            {/* Draft editor */}
-            <Paper sx={{ p: 3 }}>
-              <Stack spacing={2}>
-                <Typography variant="subtitle1" fontWeight={600}>
-                  Draft
-                </Typography>
-                <TextField
-                  label="Message body"
-                  multiline
-                  minRows={4}
-                  maxRows={12}
-                  value={draftBody}
-                  onChange={(e) => setDraftBody(e.target.value)}
-                  placeholder="Write your message here…"
-                  fullWidth
-                />
-                <TextField
-                  label="Expires at (optional)"
-                  type="datetime-local"
-                  value={liveUntilInput}
-                  onChange={(e) => setLiveUntilInput(e.target.value)}
-                  helperText="Leave blank for no expiry. Message stops showing after this time."
-                  InputLabelProps={{ shrink: true }}
-                  sx={{ maxWidth: 320 }}
-                />
-                {config?.draftUpdatedAt && (
-                  <Typography variant="caption" color="text.secondary">
-                    Last saved {formatDate(config.draftUpdatedAt)}
-                    {config.draftUpdatedBy ? ` by ${config.draftUpdatedBy}` : ""}
-                  </Typography>
-                )}
-                <Box display="flex" gap={1} flexWrap="wrap">
-                  <Button
-                    variant="outlined"
-                    onClick={handleSaveDraft}
-                    disabled={isBusy}
-                  >
-                    {saving ? "Saving…" : "Save Draft"}
-                  </Button>
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    onClick={handlePublish}
-                    disabled={isBusy}
-                  >
-                    {publishing ? "Publishing…" : "Make Live"}
-                  </Button>
-                </Box>
-              </Stack>
-            </Paper>
-
-            <Divider />
-
-            {/* Live message status */}
-            <Paper sx={{ p: 3 }}>
-              <Stack spacing={2}>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Typography variant="subtitle1" fontWeight={600}>
-                    Live Message
-                  </Typography>
-                  {isLive ? (
-                    <Chip label="LIVE" color="success" size="small" />
-                  ) : (
-                    <Chip label="No active message" size="small" />
-                  )}
-                </Box>
-
-                {isLive ? (
-                  <>
+          <Stack spacing={2}>
+            {messages.map((msg) => {
+              const chip = STATUS_CHIP[msg.status] ?? { label: msg.status, color: "default" };
+              return (
+                <Paper key={msg.id} sx={{ p: 3 }}>
+                  <Stack spacing={1.5}>
+                    <Box display="flex" alignItems="center" gap={1}>
+                      <Chip label={chip.label} color={chip.color} size="small" />
+                      {msg.liveVersion != null && (
+                        <Typography variant="caption" color="text.secondary">
+                          Version {msg.liveVersion}
+                        </Typography>
+                      )}
+                    </Box>
                     <Box
                       sx={{
                         bgcolor: "action.hover",
@@ -232,40 +229,40 @@ function AdminMessages() {
                         fontFamily: "inherit",
                       }}
                     >
-                      <Typography variant="body2">{config.liveBody}</Typography>
+                      <Typography variant="body2">{msg.body}</Typography>
                     </Box>
                     <Stack direction="row" spacing={2} flexWrap="wrap">
                       <Typography variant="caption" color="text.secondary">
-                        Version: {config.liveVersion}
+                        Created: {formatDate(msg.createdAt)}
+                        {msg.createdBy ? ` by ${msg.createdBy}` : ""}
                       </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Published: {formatDate(config.liveUpdatedAt)}
-                        {config.liveUpdatedBy ? ` by ${config.liveUpdatedBy}` : ""}
-                      </Typography>
-                      {config.liveUntil && (
+                      {msg.publishedAt && (
                         <Typography variant="caption" color="text.secondary">
-                          Expires: {formatDate(config.liveUntil)}
+                          Published: {formatDate(msg.publishedAt)}
+                        </Typography>
+                      )}
+                      {msg.liveUntil && (
+                        <Typography variant="caption" color="text.secondary">
+                          Expires: {formatDate(msg.liveUntil)}
                         </Typography>
                       )}
                     </Stack>
-                    <Box>
-                      <Button
-                        variant="outlined"
-                        color="warning"
-                        onClick={handleUnpublish}
-                        disabled={isBusy}
-                      >
-                        {unpublishing ? "Unpublishing…" : "Unpublish"}
-                      </Button>
-                    </Box>
-                  </>
-                ) : (
-                  <Typography variant="body2" color="text.secondary">
-                    No message is currently live. Save a draft and click Make Live.
-                  </Typography>
-                )}
-              </Stack>
-            </Paper>
+                    {msg.status === "live" && (
+                      <Box>
+                        <Button
+                          variant="outlined"
+                          color="warning"
+                          onClick={handleUnpublish}
+                          disabled={isBusy}
+                        >
+                          {unpublishing ? "Unpublishing…" : "Unpublish"}
+                        </Button>
+                      </Box>
+                    )}
+                  </Stack>
+                </Paper>
+              );
+            })}
           </Stack>
         )}
       </Box>

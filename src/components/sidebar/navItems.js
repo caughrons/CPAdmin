@@ -15,6 +15,7 @@ import {
   MessageCircle,
   Server,
   ShieldAlert,
+  BellRing,
 } from "lucide-react";
 
 const manageSection = [
@@ -82,6 +83,11 @@ const manageSection = [
     href: "/manage/chat",
     icon: MessageCircle,
     title: "Chat",
+  },
+  {
+    href: "/manage/admin-messages",
+    icon: BellRing,
+    title: "Admin Messages",
   },
 ];
 

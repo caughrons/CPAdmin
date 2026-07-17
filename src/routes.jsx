@@ -35,6 +35,7 @@ import PotentialSpam from "@/pages/admin/manage/PotentialSpam";
 import MapAdmin from "@/pages/admin/manage/MapAdmin";
 import AIS from "@/pages/admin/manage/AIS";
 import AdminChat from "@/pages/admin/manage/Chat";
+import AdminMessages from "@/pages/admin/manage/AdminMessages";
 import MigrateSpots from "@/pages/admin/MigrateSpots";
 
 import TestFirestoreQuery from "@/pages/admin/TestFirestoreQuery";
@@ -82,6 +83,7 @@ const routes = [
           { path: "map", element: <MapAdmin /> },
           { path: "map/ais", element: <AIS /> },
           { path: "chat", element: <AdminChat /> },
+          { path: "admin-messages", element: <AdminMessages /> },
         ],
       },
     ],

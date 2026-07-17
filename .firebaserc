@@ -5,7 +5,7 @@
   "targets": {
     "cruisapalooza-5779c": {
       "hosting": {
-        "cpadmin": ["cpadmin-cruisapalooza"]
+        "cpadmin": ["cruisapalooza-5779c"]
       }
     }
   }

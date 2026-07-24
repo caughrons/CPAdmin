@@ -215,6 +215,197 @@ function CommunityTable({ targetType, groups, loading, onTypeChange, onSetOffici
   );
 }
 
+// ── Recommendation settings (rollout % + frequency) ───────────────────────────
+//
+// Controls community_recommendation_config/{rolloutPercent,frequencyDays},
+// read live (no redeploy needed) by the communityRecommendationJob Cloud
+// Function. Rollout percentage bounds compute/read cost while the feature is
+// unproven (deterministic UID hash decides inclusion, so raising it only adds
+// users). Frequency controls how often the whole pipeline recomputes — the
+// underlying Cloud Scheduler trigger actually still fires every 24h (Cloud
+// Scheduler's own interval can't be changed at runtime without a redeploy),
+// but the job self-throttles against lastRunAt + frequencyDays, so this
+// dropdown is the real control despite the fixed daily tick underneath.
+
+const FREQUENCY_OPTIONS = [
+  { value: 1, label: "Daily" },
+  { value: 7, label: "Weekly (default)" },
+  { value: 14, label: "Every 2 weeks" },
+  { value: 30, label: "Monthly" },
+];
+
+function RecommendationSettings() {
+  const [percent, setPercent] = useState(null); // null = still loading
+  const [percentDraft, setPercentDraft] = useState("");
+  const [savingPercent, setSavingPercent] = useState(false);
+  const [percentSaved, setPercentSaved] = useState(false);
+  const [percentError, setPercentError] = useState(null);
+
+  const [frequencyDays, setFrequencyDays] = useState(null);
+  const [savingFrequency, setSavingFrequency] = useState(false);
+  const [frequencySaved, setFrequencySaved] = useState(false);
+
+  const [lastRunAt, setLastRunAt] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const snap = await rtdb.ref("community_recommendation_config").get();
+        const val = snap.exists() ? snap.val() : {};
+        const p = typeof val.rolloutPercent === "number" ? val.rolloutPercent : 10;
+        const f = typeof val.frequencyDays === "number" ? val.frequencyDays : 7;
+        setPercent(p);
+        setPercentDraft(String(p));
+        setFrequencyDays(f);
+        setLastRunAt(typeof val.lastRunAt === "number" ? val.lastRunAt : null);
+      } catch (e) {
+        console.error("Failed to load community_recommendation_config:", e);
+        setPercent(10);
+        setPercentDraft("10");
+        setFrequencyDays(7);
+      }
+    })();
+  }, []);
+
+  const handleSavePercent = async () => {
+    const num = Number(percentDraft);
+    if (!Number.isFinite(num) || num < 0 || num > 100) {
+      setPercentError("Enter a whole number between 0 and 100.");
+      return;
+    }
+    setPercentError(null);
+    setSavingPercent(true);
+    try {
+      await rtdb.ref("community_recommendation_config/rolloutPercent").set(num);
+      setPercent(num);
+      setPercentSaved(true);
+      setTimeout(() => setPercentSaved(false), 2500);
+    } catch (e) {
+      console.error("Failed to save rolloutPercent:", e);
+      setPercentError("Save failed: " + e.message);
+    } finally {
+      setSavingPercent(false);
+    }
+  };
+
+  const handleFrequencyChange = async (num) => {
+    setSavingFrequency(true);
+    try {
+      await rtdb.ref("community_recommendation_config/frequencyDays").set(num);
+      setFrequencyDays(num);
+      setFrequencySaved(true);
+      setTimeout(() => setFrequencySaved(false), 2500);
+    } catch (e) {
+      console.error("Failed to save frequencyDays:", e);
+      alert("Save failed: " + e.message);
+    } finally {
+      setSavingFrequency(false);
+    }
+  };
+
+  const percentDirty = percent !== null && percentDraft !== "" && Number(percentDraft) !== percent;
+  const nextDueAt =
+    lastRunAt !== null && frequencyDays !== null ? lastRunAt + frequencyDays * 24 * 60 * 60 * 1000 : null;
+
+  return (
+    <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
+      <Typography variant="subtitle1" fontWeight={600}>
+        Community Recommendations
+      </Typography>
+
+      <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 680, mt: 1 }}>
+        <strong>Rollout percentage</strong> — the recommendation job only computes "Recommended"
+        communities for this percentage of active users.{" "}
+        <strong>This is intentional, not a malfunction</strong> — it caps compute/read cost while
+        the feature is new and unvalidated. Each user's inclusion is decided by a deterministic
+        hash of their UID, so raising the percentage only adds users, it never drops or reshuffles
+        who's already seeing recommendations. Suggested path: 10 → 50 → 100, moving up once the
+        run's Cloud Functions logs (<code>communityRecommendationJob</code>) show a low failure
+        rate and reasonable candidate counts. Default if unset: 10%.
+      </Typography>
+      <Stack direction="row" spacing={2} alignItems="center" sx={{ mt: 1, mb: 2 }}>
+        {percent === null ? (
+          <CircularProgress size={20} />
+        ) : (
+          <>
+            <TextField
+              size="small"
+              label="Rollout %"
+              type="number"
+              inputProps={{ min: 0, max: 100, step: 1 }}
+              value={percentDraft}
+              onChange={(e) => setPercentDraft(e.target.value)}
+              sx={{ width: 120 }}
+            />
+            <Button
+              variant="contained"
+              size="small"
+              disabled={savingPercent || !percentDirty}
+              onClick={handleSavePercent}
+            >
+              {savingPercent ? <CircularProgress size={16} /> : "Save"}
+            </Button>
+            {percentSaved && (
+              <Typography variant="body2" color="success.main">
+                Saved
+              </Typography>
+            )}
+            {percentError && (
+              <Typography variant="body2" color="error.main">
+                {percentError}
+              </Typography>
+            )}
+            <Typography variant="caption" color="text.secondary">
+              Currently live: {percent}%
+            </Typography>
+          </>
+        )}
+      </Stack>
+
+      <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 680, mt: 1 }}>
+        <strong>Recommendation frequency</strong> — how often the whole pipeline recomputes, from
+        daily up to monthly. Separate from the 7-day activity window used to decide who's "active"
+        each time it runs, which stays fixed regardless of this setting. If community creation
+        picks up, switching to Daily refreshes recommendations faster and can help drive more app
+        usage. Under the hood the job still checks in every 24 hours, but only does real work once
+        this interval has elapsed since the last full run — a change here takes effect within at
+        most 24 hours, not instantly.
+      </Typography>
+      <Stack direction="row" spacing={2} alignItems="center" sx={{ mt: 1 }}>
+        {frequencyDays === null ? (
+          <CircularProgress size={20} />
+        ) : (
+          <>
+            <Select
+              size="small"
+              value={frequencyDays}
+              onChange={(e) => handleFrequencyChange(e.target.value)}
+              disabled={savingFrequency}
+              sx={{ minWidth: 170 }}
+            >
+              {FREQUENCY_OPTIONS.map((opt) => (
+                <MenuItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </MenuItem>
+              ))}
+            </Select>
+            {savingFrequency && <CircularProgress size={16} />}
+            {frequencySaved && (
+              <Typography variant="body2" color="success.main">
+                Saved
+              </Typography>
+            )}
+            <Typography variant="caption" color="text.secondary">
+              {lastRunAt ? `Last full run: ${new Date(lastRunAt).toLocaleString()}` : "Last full run: never"}
+              {nextDueAt ? ` · Next due: ${new Date(nextDueAt).toLocaleString()}` : ""}
+            </Typography>
+          </>
+        )}
+      </Stack>
+    </Paper>
+  );
+}
+
 // ── Main page ────────────────────────────────────────────────────────────────
 
 function Communities() {
@@ -349,6 +540,8 @@ function Communities() {
           Refresh
         </Button>
       </Stack>
+
+      <RecommendationSettings />
 
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}>
         <Tab label={`Users (${userGroups.length})`} />

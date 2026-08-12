@@ -9,9 +9,15 @@ if (!firebase.apps.length) {
 
 const functions = firebase.functions();
 
-async function callFunction(functionName, data) {
+// The callable SDK defaults to a 70s client-side timeout regardless of how long
+// the Cloud Function itself is configured to run — long-running admin operations
+// need an explicit timeout matching (or exceeding) their server-side budget, or
+// the client aborts with "deadline-exceeded" while the function is still working.
+async function callFunction(functionName, data, timeoutMs) {
   try {
-    const callable = functions.httpsCallable(functionName);
+    const callable = timeoutMs
+      ? functions.httpsCallable(functionName, { timeout: timeoutMs })
+      : functions.httpsCallable(functionName);
     const result = await callable(data);
     return result.data;
   } catch (error) {
@@ -49,7 +55,7 @@ export async function moderateComment(commentId, action) {
 }
 
 export async function importSpots(spots) {
-  return callFunction('importSpots', { spots });
+  return callFunction('importSpots', { spots }, 540000); // matches server timeoutSeconds: 540
 }
 
 export async function getSpotDetail(spotId) {
@@ -57,19 +63,15 @@ export async function getSpotDetail(spotId) {
 }
 
 export async function deduplicateSpots(spotIds, dryRun) {
-  return callFunction('deduplicateSpots', { spotIds, dryRun });
+  return callFunction('deduplicateSpots', { spotIds, dryRun }, 540000); // matches server timeoutSeconds: 540
 }
 
 export async function purgeDeletedSpots(dryRun) {
-  return callFunction('purgeDeletedSpots', { dryRun });
+  return callFunction('purgeDeletedSpots', { dryRun }, 540000); // matches server timeoutSeconds: 540
 }
 
 export async function bulkUpdateRegion(region) {
   return callFunction('bulkUpdateRegion', { region });
-}
-
-export async function migrateSpotSchema(dryRun) {
-  return callFunction('migrateSpotSchema', { dryRun });
 }
 
 export async function generateSnapshotForSpot(latitude, longitude) {
@@ -77,29 +79,17 @@ export async function generateSnapshotForSpot(latitude, longitude) {
 }
 
 export async function bulkGenerateSnapshots() {
-  return callFunction('bulkGenerateSnapshots', {});
+  return callFunction('bulkGenerateSnapshots', {}, 90000); // server timeoutSeconds: 60, some margin
 }
 
 export async function processSnapshotBatch(spotId) {
-  return callFunction('processSnapshotBatch', { spotId });
-}
-
-export async function cleanupOldPngSnapshots() {
-  return callFunction('cleanupOldPngSnapshots', {});
+  return callFunction('processSnapshotBatch', { spotId }, 90000); // server timeoutSeconds: 60, some margin
 }
 
 export async function analyzeR2Storage() {
-  return callFunction('analyzeR2Storage', {});
+  return callFunction('analyzeR2Storage', {}, 540000); // matches server timeoutSeconds: 540
 }
 
 export async function quickStorageStats() {
-  return callFunction('quickStorageStats', {});
-}
-
-export async function processCruisnewsImages(options = {}) {
-  return callFunction('processCruisnewsImages', options);
-}
-
-export async function deleteCruisnewsPngs(options = {}) {
-  return callFunction('deleteCruisnewsPngs', options);
+  return callFunction('quickStorageStats', {}, 120000); // matches server timeoutSeconds: 120
 }

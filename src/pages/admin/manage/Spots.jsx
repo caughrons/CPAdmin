@@ -25,6 +25,8 @@ import {
   Tab,
   Tabs,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -53,14 +55,10 @@ import {
   deduplicateSpots,
   purgeDeletedSpots,
   bulkUpdateRegion,
-  migrateSpotSchema,
   bulkGenerateSnapshots,
   processSnapshotBatch,
-  cleanupOldPngSnapshots,
   analyzeR2Storage,
   quickStorageStats,
-  processCruisnewsImages,
-  deleteCruisnewsPngs,
 } from "@/services/spotsAdmin";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -153,6 +151,20 @@ function parseCSV(text) {
   return { headers, rows };
 }
 
+// Mirrors deriveRegionFromCoordinates in functions/src/spotsAdmin.ts — used client-side
+// to warn when a chosen import region doesn't match a row's coordinates.
+function deriveRegionFromCoordinates(lat, lng) {
+  if (lat >= 10 && lat <= 25 && lng >= -90 && lng <= -60) return "Caribbean";
+  if (lat >= 30 && lat <= 45 && lng >= 0 && lng <= 40) return "Mediterranean";
+  if (lat >= -50 && lat <= 0 && ((lng >= 140 && lng <= 180) || (lng >= -180 && lng <= -120))) return "Pacific";
+  if (lat >= 0 && lat <= 60 && lng >= 120 && lng <= 180) return "Pacific";
+  if (lat >= 25 && lat <= 45 && lng >= -85 && lng <= -65) return "US East";
+  if (lat >= 24 && lat <= 31 && lng >= -98 && lng <= -80) return "US Gulf";
+  if (lat >= 32 && lat <= 49 && lng >= -125 && lng <= -117) return "US West";
+  if (lat < -50) return "Southern Ocean";
+  return "Global";
+}
+
 function validateSpotRow(row) {
   const errors = [];
   
@@ -184,6 +196,16 @@ function validateSpotRow(row) {
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
+// Scalar fields the granular review UI can diff and accept/reject individually.
+// Other proposedData keys (primaryImageIndex, mapSnapshotR2Key, etc.) aren't
+// reviewable here and default-accept, same as the whole-request Approve button.
+const REVIEWABLE_FIELDS = ["name", "type", "description", "latitude", "longitude", "closed"];
+
+function fieldLabel(field) {
+  if (field === "closed") return "Closed status";
+  return field.charAt(0).toUpperCase() + field.slice(1);
+}
+
 function Spots() {
   const [tab, setTab] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -208,6 +230,10 @@ function Spots() {
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [reviewNotes, setReviewNotes] = useState("");
+  // Per-field/per-photo accept-reject state for the granular update review UI.
+  // { [field]: boolean } and { [`new:${r2_key}`]: boolean, [`removed:${r2_key}`]: boolean } — true = accept.
+  const [fieldDecisions, setFieldDecisions] = useState({});
+  const [photoDecisions, setPhotoDecisions] = useState({});
   
   // CSV import state
   const [csvFile, setCsvFile] = useState(null);
@@ -215,6 +241,12 @@ function Spots() {
   const [csvStep, setCsvStep] = useState(1);
   const [importProgress, setImportProgress] = useState(0);
   const [importResult, setImportResult] = useState(null);
+  const [csvRowErrors, setCsvRowErrors] = useState({}); // { [_index]: string[] }
+  const [csvFilter, setCsvFilter] = useState("all"); // "all" | "valid" | "invalid"
+  const [importRegion, setImportRegion] = useState("");
+  const [regionMismatchDialogOpen, setRegionMismatchDialogOpen] = useState(false);
+  const [regionMismatches, setRegionMismatches] = useState([]);
+  const [expandedRawIndex, setExpandedRawIndex] = useState(null);
   
   // Bulk region update state
   const [regionDialogOpen, setRegionDialogOpen] = useState(false);
@@ -234,11 +266,6 @@ function Spots() {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editForm, setEditForm] = useState({});
   
-  // Migration state
-  const [migrateDialogOpen, setMigrateDialogOpen] = useState(false);
-  const [migrateResult, setMigrateResult] = useState(null);
-  const [migrateLoading, setMigrateLoading] = useState(false);
-  
   // Bulk snapshot generation state
   const [snapshotDialogOpen, setSnapshotDialogOpen] = useState(false);
   const [snapshotProgress, setSnapshotProgress] = useState({
@@ -251,16 +278,10 @@ function Spots() {
     cancelRequested: false
   });
   
-  // Cleanup PNG snapshots state
-  const [cleanupLoading, setCleanupLoading] = useState(false);
-  const [cleanupResult, setCleanupResult] = useState(null);
-  
   // Storage analysis state
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
   const [quickStatsLoading, setQuickStatsLoading] = useState(false);
-  const [processCruisnewsLoading, setProcessCruisnewsLoading] = useState(false);
-  const [deletePngsLoading, setDeletePngsLoading] = useState(false);
 
   // ── Load spots ─────────────────────────────────────────────────────────────
   
@@ -352,7 +373,7 @@ function Spots() {
     }
   };
   
-  const handleReviewRequest = async (action) => {
+  const handleReviewRequest = async (action, editedData = null) => {
     if (!selectedRequest) return;
 
     // Blur before state changes to prevent aria-hidden-on-focused-element warning
@@ -365,17 +386,82 @@ function Spots() {
         selectedRequest.id,
         action,
         reviewNotes || null,
-        null
+        editedData
       );
       setReviewDialogOpen(false);
       setSelectedRequest(null);
       setReviewNotes("");
+      setFieldDecisions({});
+      setPhotoDecisions({});
       await loadRequests();
     } catch (e) {
       alert(`Review failed: ${e.message}`);
     }
   };
-  
+
+  // Diffs a requestType==="update" request's originalData vs proposedData for the
+  // granular review UI. A rejected field must be explicitly written back to its
+  // original value in editedData — omitting it falls back to proposedData, not
+  // originalData, since reviewChangeRequest merges as {...proposedData, ...editedData}.
+  const getChangeRequestDiff = (request) => {
+    if (!request || request.requestType !== "update") {
+      return { changedFields: [], newPhotos: [], removedPhotos: [], unchangedPhotos: [], uploadingPhotos: [], original: {}, proposed: {} };
+    }
+    const original = request.originalData || {};
+    const proposed = request.proposedData || {};
+    const changedFields = REVIEWABLE_FIELDS.filter((f) => {
+      const a = original[f];
+      const b = proposed[f];
+      if (a === undefined && b === undefined) return false;
+      return JSON.stringify(a) !== JSON.stringify(b);
+    });
+
+    const originalPhotos = (original.photos || []).filter((p) => p.r2_key);
+    const proposedPhotos = (proposed.photos || []).filter((p) => p.r2_key);
+    const originalKeys = new Set(originalPhotos.map((p) => p.r2_key));
+    const proposedKeys = new Set(proposedPhotos.map((p) => p.r2_key));
+    const newPhotos = proposedPhotos.filter((p) => !originalKeys.has(p.r2_key));
+    const removedPhotos = originalPhotos.filter((p) => !proposedKeys.has(p.r2_key));
+    // Present in both original and proposed (untouched by this request) — still
+    // shown so the reviewer has full context instead of the photo silently
+    // disappearing from the review dialog.
+    const unchangedPhotos = proposedPhotos.filter((p) => originalKeys.has(p.r2_key));
+    const uploadingPhotos = (proposed.photos || []).filter((p) => !p.r2_key);
+
+    return { changedFields, newPhotos, removedPhotos, unchangedPhotos, uploadingPhotos, original, proposed };
+  };
+
+  // Reset per-field/per-photo decisions to "accept everything" whenever a new
+  // request is opened for review.
+  useEffect(() => {
+    if (!selectedRequest) return;
+    const { changedFields, newPhotos, removedPhotos } = getChangeRequestDiff(selectedRequest);
+    const fd = {};
+    changedFields.forEach((f) => { fd[f] = true; });
+    setFieldDecisions(fd);
+    const pd = {};
+    newPhotos.forEach((p) => { pd[`new:${p.r2_key}`] = true; });
+    removedPhotos.forEach((p) => { pd[`removed:${p.r2_key}`] = true; });
+    setPhotoDecisions(pd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRequest]);
+
+  const handleSubmitFieldDecisions = () => {
+    if (!selectedRequest) return;
+    const { changedFields, newPhotos, removedPhotos, original, proposed } = getChangeRequestDiff(selectedRequest);
+    const editedData = {};
+    changedFields.forEach((f) => {
+      editedData[f] = fieldDecisions[f] ? proposed[f] : original[f];
+    });
+    if (newPhotos.length > 0 || removedPhotos.length > 0) {
+      const originalPhotos = (original.photos || []).filter((p) => p.r2_key);
+      const keptOriginal = originalPhotos.filter((p) => !photoDecisions[`removed:${p.r2_key}`]);
+      const acceptedNew = newPhotos.filter((p) => photoDecisions[`new:${p.r2_key}`]);
+      editedData.photos = [...keptOriginal, ...acceptedNew];
+    }
+    handleReviewRequest("edit_approve", editedData);
+  };
+
   const handleModerateComment = async (commentId, action) => {
     try {
       await moderateComment(commentId, action);
@@ -458,25 +544,6 @@ function Spots() {
     }
   };
   
-  const handleMigrateSchema = async (dryRun = true) => {
-    setMigrateLoading(true);
-    try {
-      const result = await migrateSpotSchema(dryRun);
-      setMigrateResult(result);
-      
-      if (!dryRun) {
-        alert(`Success! ${result.message}\nMigrated: ${result.migrated}\nSkipped: ${result.skipped}`);
-        setMigrateDialogOpen(false);
-        setMigrateResult(null);
-        await loadSpots();
-      }
-    } catch (e) {
-      alert(`Migration failed: ${e.message}`);
-    } finally {
-      setMigrateLoading(false);
-    }
-  };
-  
   const handleBulkSnapshotGeneration = async () => {
     try {
       setSnapshotProgress({ 
@@ -553,25 +620,6 @@ function Spots() {
     } catch (error) {
       alert(`Failed to start snapshot generation: ${error.message}`);
       setSnapshotProgress(prev => ({ ...prev, isProcessing: false, cancelRequested: false }));
-    }
-  };
-  
-  const handleCleanupPngSnapshots = async () => {
-    if (!confirm('This will delete all old PNG snapshot files from R2 storage. Continue?')) {
-      return;
-    }
-    
-    setCleanupLoading(true);
-    setCleanupResult(null);
-    
-    try {
-      const result = await cleanupOldPngSnapshots();
-      setCleanupResult(result);
-      alert(`Cleanup complete!\nDeleted: ${result.deleted}\nFailed: ${result.failed}\nTotal found: ${result.totalFound}`);
-    } catch (error) {
-      alert(`Cleanup failed: ${error.message}`);
-    } finally {
-      setCleanupLoading(false);
     }
   };
   
@@ -656,108 +704,6 @@ function Spots() {
     }
   };
   
-  const handleProcessCruisnewsImages = async (dryRun = false) => {
-    const action = dryRun ? 'Dry run' : 'Process';
-    const confirmMessage = dryRun 
-      ? 'This will analyze CruisNews images without making changes. Continue?'
-      : 'This will convert all CruisNews PNG images to optimized WebP format. This action cannot be undone. Continue?';
-      
-    if (!confirm(confirmMessage)) {
-      return;
-    }
-    
-    setProcessCruisnewsLoading(true);
-    
-    try {
-      const result = await processCruisnewsImages({ dryRun, batchSize: 10 });
-      
-      console.log(`=== CRUISNEWS IMAGE PROCESSING (${action.toUpperCase()}) ===`);
-      console.log('Result:', result);
-      
-      let message = `${action} Complete!\n\n`;
-      message += `Total PNG images found: ${result.totalFound}\n`;
-      message += `Processed: ${result.processed}\n`;
-      message += `Skipped: ${result.skipped}\n`;
-      message += `Failed: ${result.failed}\n`;
-      
-      if (result.spaceSaved > 0) {
-        message += `Space saved: ${result.spaceSavedFormatted}\n`;
-      }
-      
-      if (result.errors.length > 0) {
-        message += `\nErrors (first 5):\n`;
-        result.errors.slice(0, 5).forEach(error => {
-          message += `- ${error}\n`;
-        });
-        if (result.errors.length > 5) {
-          message += `... and ${result.errors.length - 5} more errors (check console)`;
-        }
-      }
-      
-      if (!dryRun && result.processed > 0) {
-        message += `\n✅ ${result.processed} images converted to WebP format!`;
-      }
-      
-      alert(message + '\n\nFull details logged to console (F12 → Console)');
-    } catch (error) {
-      console.error(`${action} failed:`, error);
-      alert(`${action} failed: ${error.message}\n\nCheck console for details.`);
-    } finally {
-      setProcessCruisnewsLoading(false);
-    }
-  };
-  
-  const handleDeleteCruisnewsPngs = async (dryRun = false) => {
-    const action = dryRun ? 'Dry run' : 'Delete';
-    const confirmMessage = dryRun 
-      ? 'This will analyze CruisNews PNG images for deletion without making changes. Continue?'
-      : '⚠️ WARNING: This will permanently delete all CruisNews PNG images from R2 storage. This action cannot be undone. Only run this AFTER confirming WebP conversions are working. Continue?';
-      
-    if (!confirm(confirmMessage)) {
-      return;
-    }
-    
-    setDeletePngsLoading(true);
-    
-    try {
-      const result = await deleteCruisnewsPngs({ dryRun, batchSize: 50 });
-      
-      console.log(`=== CRUISNEWS PNG DELETION (${action.toUpperCase()}) ===`);
-      console.log('Result:', result);
-      
-      let message = `${action} Complete!\n\n`;
-      message += `Total PNG images found: ${result.totalFound}\n`;
-      message += `Deleted: ${result.deleted}\n`;
-      message += `Failed: ${result.failed}\n`;
-      
-      if (result.spaceFreed > 0) {
-        message += `Space freed: ${result.spaceFreedFormatted}\n`;
-      }
-      
-      if (result.errors.length > 0) {
-        message += `\nErrors (first 5):\n`;
-        result.errors.slice(0, 5).forEach(error => {
-          message += `- ${error}\n`;
-        });
-        if (result.errors.length > 5) {
-          message += `... and ${result.errors.length - 5} more errors (check console)`;
-        }
-      }
-      
-      if (!dryRun && result.deleted > 0) {
-        message += `\n🗑️ ${result.deleted} PNG files permanently deleted!`;
-        message += `\n💾 ${result.spaceFreedFormatted} of storage freed!`;
-      }
-      
-      alert(message + '\n\nFull details logged to console (F12 → Console)');
-    } catch (error) {
-      console.error(`${action} failed:`, error);
-      alert(`${action} failed: ${error.message}\n\nCheck console for details.`);
-    } finally {
-      setDeletePngsLoading(false);
-    }
-  };
-  
   const handleBulkDelete = async () => {
     if (selectedRows.length === 0) {
       alert('No spots selected');
@@ -796,27 +742,92 @@ function Spots() {
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
     if (!file) return;
-    
+
     const reader = new FileReader();
     reader.onload = (e) => {
-      const text = e.target.result;
+      // Strip a UTF-8 BOM if present — otherwise it gets prepended to the first
+      // header name (e.g. "﻿name") and silently breaks matching against it.
+      let text = e.target.result;
+      if (text.charCodeAt(0) === 0xfeff) {
+        text = text.slice(1);
+      }
       const parsed = parseCSV(text);
+      const errorsMap = {};
+      parsed.rows.forEach(row => {
+        errorsMap[row._index] = validateSpotRow(row);
+      });
       setCsvData(parsed);
+      setCsvRowErrors(errorsMap);
+      setCsvFilter("all");
+      setImportRegion("");
+      setRegionMismatches([]);
+      setExpandedRawIndex(null);
       setCsvFile(file);
       setCsvStep(2);
     };
-    reader.readAsText(file);
+    // Explicit UTF-8 so accented/non-ASCII names (e.g. "São Paulo", "Köln") decode correctly.
+    reader.readAsText(file, "UTF-8");
   };
-  
+
+  // Compares each row's coordinates against the chosen import region and warns
+  // (non-blocking) if any don't line up, so bad region picks get caught before import.
+  const checkRegionMismatch = (region) => {
+    if (!region) {
+      setRegionMismatches([]);
+      return;
+    }
+    const mismatches = csvData.rows
+      .map(row => {
+        const lat = parseFloat(row.latitude);
+        const lng = parseFloat(row.longitude);
+        if (isNaN(lat) || isNaN(lng)) return null;
+        const derived = deriveRegionFromCoordinates(lat, lng);
+        if (derived === region) return null;
+        return { name: row.name || `Row ${row._index + 1}`, lat, lng, derived };
+      })
+      .filter(Boolean);
+    setRegionMismatches(mismatches);
+    if (mismatches.length > 0) {
+      setRegionMismatchDialogOpen(true);
+    }
+  };
+
+  // Revalidate a single row on demand (validation is otherwise "sticky" so edits
+  // don't get re-checked until the user explicitly asks, letting them work through
+  // rows one at a time without the grid shifting under them).
+  const revalidateRow = (index) => {
+    const row = csvData.rows.find(r => r._index === index);
+    if (!row) return;
+    setCsvRowErrors(prev => ({ ...prev, [index]: validateSpotRow(row) }));
+  };
+
+  // The grid only exposes columns for known headers, so invalid data in a
+  // misaligned/unexpected column may not be visible anywhere else. Editing the
+  // full raw row as one CSV line lets the user fix anything, then revalidate.
+  const updateRowRaw = (index, rawText) => {
+    const values = rawText.split(",").map(v => v.trim());
+    setCsvData(prev => ({
+      ...prev,
+      rows: prev.rows.map(r => {
+        if (r._index !== index) return r;
+        const newRow = { _index: index };
+        prev.headers.forEach((h, i) => {
+          newRow[h] = values[i] || "";
+        });
+        return newRow;
+      }),
+    }));
+  };
+
   const handleImport = async () => {
-    const validRows = csvData.rows.filter(row => validateSpotRow(row).length === 0);
+    const validRows = csvData.rows.filter(row => (csvRowErrors[row._index] || []).length === 0);
     const spots = validRows.map(row => ({
       name: row.name,
       latitude: parseFloat(row.latitude),
       longitude: parseFloat(row.longitude),
       type: row.type,
       description: row.description || undefined,
-      region: row.region || undefined,
+      region: importRegion || row.region || undefined,
     }));
     
     setCsvStep(4);
@@ -930,6 +941,15 @@ function Spots() {
         ) : (
           <Chip label="Active" color="success" size="small" />
         ),
+    },
+    {
+      field: "closed",
+      headerName: "Closed",
+      width: 100,
+      renderCell: (params) =>
+        params.value ? (
+          <Chip label="Closed" color="default" size="small" />
+        ) : null,
     },
     {
       field: "actions",
@@ -1065,29 +1085,72 @@ function Spots() {
     }
     
     if (csvStep === 2 || csvStep === 3) {
-      const validRows = csvData.rows.filter(row => validateSpotRow(row).length === 0);
-      const invalidRows = csvData.rows.filter(row => validateSpotRow(row).length > 0);
-      
+      const validRows = csvData.rows.filter(row => (csvRowErrors[row._index] || []).length === 0);
+      const invalidRows = csvData.rows.filter(row => (csvRowErrors[row._index] || []).length > 0);
+      const filteredRows =
+        csvFilter === "valid" ? validRows : csvFilter === "invalid" ? invalidRows : csvData.rows;
+
       return (
         <Box sx={{ p: 2 }}>
-          <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
+          <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 1 }}>
             <Alert severity="info">
               {validRows.length} valid, {invalidRows.length} invalid
             </Alert>
+            <FormControl size="small" sx={{ minWidth: 220 }}>
+              <InputLabel id="import-region-label">Assign Region</InputLabel>
+              <Select
+                labelId="import-region-label"
+                label="Assign Region"
+                value={importRegion}
+                onChange={(e) => {
+                  const region = e.target.value;
+                  setImportRegion(region);
+                  checkRegionMismatch(region);
+                }}
+              >
+                {VALID_REGIONS.map(r => (
+                  <MenuItem key={r} value={r}>{r}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={csvFilter}
+              onChange={(e, val) => {
+                if (val) setCsvFilter(val);
+              }}
+            >
+              <ToggleButton value="all">All ({csvData.rows.length})</ToggleButton>
+              <ToggleButton value="valid">Valid ({validRows.length})</ToggleButton>
+              <ToggleButton value="invalid">Invalid ({invalidRows.length})</ToggleButton>
+            </ToggleButtonGroup>
             <Box sx={{ flexGrow: 1 }} />
             <Button
               variant="contained"
-              onClick={handleImport}
-              disabled={invalidRows.length > 0}
+              onClick={() => {
+                if (invalidRows.length > 0) {
+                  const proceed = confirm(
+                    `${invalidRows.length} invalid row(s) will be skipped and not imported. Continue with the remaining ${validRows.length} valid row(s)?`
+                  );
+                  if (!proceed) return;
+                }
+                handleImport();
+              }}
+              disabled={!importRegion || validRows.length === 0}
             >
               Proceed to Import
             </Button>
             <Button onClick={() => setCsvStep(1)}>Cancel</Button>
           </Stack>
-          
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
+            The assigned region is applied to every imported spot, overriding any per-row "region" values in the CSV.
+          </Typography>
+
           <Paper sx={{ height: 500, width: "100%" }}>
             <DataGrid
-              rows={csvData.rows}
+              rows={filteredRows}
+              getRowHeight={(params) => (expandedRawIndex === params.id ? "auto" : 52)}
               columns={[
                 ...csvData.headers.map(h => ({
                   field: h,
@@ -1095,7 +1158,7 @@ function Spots() {
                   flex: 1,
                   minWidth: 120,
                   renderCell: (params) => {
-                    const errors = validateSpotRow(params.row);
+                    const errors = csvRowErrors[params.row._index] || [];
                     const fieldError = errors.find(e => e.startsWith(`${h}:`));
                     return (
                       <Tooltip title={fieldError || ""}>
@@ -1112,21 +1175,78 @@ function Spots() {
                   },
                 })),
                 {
-                  field: "_errors",
-                  headerName: "Validation Errors",
-                  flex: 2,
-                  minWidth: 250,
+                  field: "_valid",
+                  headerName: "Valid",
+                  width: 110,
+                  sortable: false,
                   renderCell: (params) => {
-                    const errors = validateSpotRow(params.row);
-                    if (errors.length === 0) {
+                    const index = params.row._index;
+                    const errors = csvRowErrors[index] || [];
+                    const isValid = errors.length === 0;
+                    return (
+                      <Tooltip title="Click to revalidate this row">
+                        <Chip
+                          label={isValid ? "Valid" : "Invalid"}
+                          color={isValid ? "success" : "error"}
+                          size="small"
+                          onClick={() => revalidateRow(index)}
+                          sx={{ cursor: "pointer" }}
+                        />
+                      </Tooltip>
+                    );
+                  },
+                },
+                {
+                  field: "_raw",
+                  headerName: "Raw",
+                  flex: 2,
+                  minWidth: 320,
+                  sortable: false,
+                  renderCell: (params) => {
+                    const index = params.row._index;
+                    const errors = csvRowErrors[index] || [];
+                    const isValid = errors.length === 0;
+                    const rawValue = csvData.headers.map(h => params.row[h]).join(", ");
+                    const isExpanded = expandedRawIndex === index;
+
+                    if (isExpanded) {
                       return (
-                        <Chip label="Valid" color="success" size="small" />
+                        <TextField
+                          size="small"
+                          variant="standard"
+                          multiline
+                          fullWidth
+                          autoFocus
+                          defaultValue={rawValue}
+                          onBlur={(e) => {
+                            updateRowRaw(index, e.target.value);
+                            setExpandedRawIndex(null);
+                          }}
+                          error={!isValid}
+                          helperText={!isValid ? errors.join("; ") : ""}
+                          InputProps={{ disableUnderline: true }}
+                          sx={{ "& .MuiFormHelperText-root": { fontSize: "0.65rem", m: 0 }, py: 1 }}
+                        />
                       );
                     }
+
                     return (
-                      <Box sx={{ color: "error.main", fontSize: "0.75rem" }}>
-                        {errors.join("; ")}
-                      </Box>
+                      <Tooltip title={!isValid ? errors.join("; ") : rawValue}>
+                        <Box
+                          onClick={() => setExpandedRawIndex(index)}
+                          sx={{
+                            width: "100%",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            cursor: "text",
+                            fontSize: "0.8rem",
+                            color: !isValid ? "error.main" : "inherit",
+                          }}
+                        >
+                          {rawValue}
+                        </Box>
+                      </Tooltip>
                     );
                   },
                 },
@@ -1165,6 +1285,11 @@ function Spots() {
                   setCsvStep(1);
                   setCsvFile(null);
                   setCsvData({ headers: [], rows: [] });
+                  setCsvRowErrors({});
+                  setCsvFilter("all");
+                  setImportRegion("");
+                  setRegionMismatches([]);
+                  setExpandedRawIndex(null);
                   setImportResult(null);
                   setTab(0);
                 }}
@@ -1184,10 +1309,13 @@ function Spots() {
     <React.Fragment>
       <Helmet title="Spots" />
       
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="h3" gutterBottom>
+      <Box sx={{ mb: 3, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <Typography variant="h3" gutterBottom sx={{ mb: 0 }}>
           Spots Management
         </Typography>
+        <IconButton onClick={loadSpots} disabled={loading}>
+          <RefreshCw size={18} />
+        </IconButton>
       </Box>
       
       {error && (
@@ -1266,6 +1394,25 @@ function Spots() {
               </FormControl>
               
               <FormControl size="small">
+                <InputLabel>Closed</InputLabel>
+                <Select
+                  value={filters.closed === undefined ? "" : String(filters.closed)}
+                  label="Closed"
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setFilters({
+                      ...filters,
+                      closed: val === "" ? undefined : val === "true",
+                    });
+                  }}
+                >
+                  <MenuItem value="">All</MenuItem>
+                  <MenuItem value="true">Closed</MenuItem>
+                  <MenuItem value="false">Open</MenuItem>
+                </Select>
+              </FormControl>
+
+              <FormControl size="small">
                 <InputLabel>Region</InputLabel>
                 <Select
                   value={filters.region || ""}
@@ -1329,12 +1476,7 @@ function Spots() {
                 }}
               />
             </Box>
-            <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
-              <IconButton onClick={loadSpots} disabled={loading}>
-                <RefreshCw size={18} />
-              </IconButton>
-            </Box>
-            
+
             <Box sx={{ mt: 2, display: 'flex', alignItems: 'center' }}>
               <Typography variant="body2" sx={{ mr: 2, fontWeight: 600 }}>
                 Total: {totalCount} spot{totalCount !== 1 ? 's' : ''}
@@ -1389,19 +1531,6 @@ function Spots() {
               <Button
                 size="small"
                 variant="outlined"
-                color="warning"
-                onClick={() => {
-                  setMigrateDialogOpen(true);
-                  handleMigrateSchema(true);
-                }}
-                sx={{ mr: 1 }}
-              >
-                Migrate Schema
-              </Button>
-              
-              <Button
-                size="small"
-                variant="outlined"
                 color="primary"
                 onClick={handleBulkSnapshotGeneration}
                 disabled={snapshotProgress.isProcessing}
@@ -1428,56 +1557,6 @@ function Spots() {
                 sx={{ mr: 1 }}
               >
                 {analysisLoading ? 'Analyzing...' : 'Full Analysis'}
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                color="warning"
-                onClick={() => handleProcessCruisnewsImages(true)}
-                disabled={processCruisnewsLoading}
-                sx={{ mr: 1 }}
-              >
-                {processCruisnewsLoading ? 'Analyzing...' : 'CruisNews Dry Run'}
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                color="secondary"
-                onClick={() => handleProcessCruisnewsImages(false)}
-                disabled={processCruisnewsLoading}
-                sx={{ mr: 1 }}
-              >
-                {processCruisnewsLoading ? 'Processing...' : 'Convert CruisNews'}
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                color="success"
-                onClick={() => handleDeleteCruisnewsPngs(true)}
-                disabled={deletePngsLoading}
-                sx={{ mr: 1 }}
-              >
-                {deletePngsLoading ? 'Analyzing...' : 'PNGs Dry Run'}
-              </Button>
-              <Button
-                size="small"
-                variant="contained"
-                color="error"
-                onClick={() => handleDeleteCruisnewsPngs(false)}
-                disabled={deletePngsLoading}
-                sx={{ mr: 1 }}
-              >
-                {deletePngsLoading ? 'Deleting...' : 'Delete PNGs ⚠️'}
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                color="error"
-                onClick={handleCleanupPngSnapshots}
-                disabled={cleanupLoading}
-                sx={{ mr: 1 }}
-              >
-                {cleanupLoading ? 'Cleaning...' : 'Cleanup Old PNGs'}
               </Button>
             </Box>
           </Box>
@@ -1546,7 +1625,33 @@ function Spots() {
           {renderCSVStep()}
         </Paper>
       )}
-      
+
+      <Dialog
+        open={regionMismatchDialogOpen}
+        onClose={() => setRegionMismatchDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Coordinates Don't Match Selected Region</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 2 }}>
+            {regionMismatches.length} row{regionMismatches.length === 1 ? "" : "s"} have coordinates
+            that don't fall within "{importRegion}" based on lat/long. They'll still be imported and
+            tagged "{importRegion}" if you proceed — double-check these before importing.
+          </Typography>
+          <Stack spacing={0.5} sx={{ maxHeight: 300, overflowY: "auto" }}>
+            {regionMismatches.map((m, i) => (
+              <Typography key={i} variant="body2" color="text.secondary">
+                {m.name} ({m.lat}, {m.lng}) — looks like {m.derived}
+              </Typography>
+            ))}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRegionMismatchDialogOpen(false)}>OK</Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Detail Drawer */}
       <Drawer
         anchor="right"
@@ -1584,6 +1689,9 @@ function Spots() {
                     )}
                     {selectedSpot.deleted && (
                       <Chip label="Deleted" color="error" size="small" />
+                    )}
+                    {selectedSpot.closed && (
+                      <Chip label="Closed" color="default" size="small" />
                     )}
                     {selectedSpot.isPrivate && (
                       <Chip label="Private" color="warning" size="small" />
@@ -2040,6 +2148,20 @@ function Spots() {
                         </Button>
                       )}
                     </Stack>
+
+                    <Button
+                      variant="outlined"
+                      color={selectedSpot.closed ? "success" : "inherit"}
+                      size="medium"
+                      onClick={() =>
+                        handleSpotAction(
+                          selectedSpot.id,
+                          selectedSpot.closed ? "setOpen" : "setClosed"
+                        )
+                      }
+                    >
+                      {selectedSpot.closed ? "Reopen Spot" : "Mark Closed"}
+                    </Button>
                   </Stack>
                 </Stack>
               </Box>
@@ -2120,46 +2242,203 @@ function Spots() {
                 Type: {selectedRequest.requestType}
               </Alert>
               
-              {selectedRequest.requestType === "update" && (
-                <Box>
-                  <Typography variant="subtitle2" gutterBottom>
-                    Proposed Changes:
-                  </Typography>
-                  <Paper sx={{ p: 2, bgcolor: "warning.light" }}>
-                    <pre style={{ margin: 0, fontSize: "0.875rem" }}>
-                      {JSON.stringify(
-                        { ...selectedRequest.proposedData, photos: undefined },
-                        null,
-                        2
-                      )}
-                    </pre>
-                  </Paper>
-                  {selectedRequest.proposedData?.photos?.length > 0 && (
-                    <Box sx={{ mt: 1 }}>
-                      <Typography variant="subtitle2" gutterBottom>
-                        Proposed Photos ({selectedRequest.proposedData.photos.length}):
-                      </Typography>
-                      <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-                        {selectedRequest.proposedData.photos.map((photo, idx) =>
-                          photo.r2_key ? (
-                            <Box
-                              key={idx}
-                              component="img"
-                              src={`https://cruisapalooza.com/${photo.r2_key}`}
-                              alt={`Photo ${idx + 1}`}
-                              sx={{
-                                width: 120,
-                                height: 90,
-                                objectFit: "cover",
-                                borderRadius: 1,
-                                border: "1px solid",
-                                borderColor: "divider",
+              {selectedRequest.requestType === "update" && (() => {
+                const { changedFields, newPhotos, removedPhotos, unchangedPhotos, uploadingPhotos, original, proposed } =
+                  getChangeRequestDiff(selectedRequest);
+                const regularFields = changedFields.filter((f) => f !== "closed");
+                const hasPhotoChanges = newPhotos.length > 0 || removedPhotos.length > 0;
+
+                return (
+                  <Box>
+                    {changedFields.includes("closed") && (
+                      <Alert
+                        severity={proposed.closed ? "error" : "success"}
+                        sx={{ mb: 2 }}
+                        action={
+                          <ToggleButtonGroup
+                            size="small"
+                            exclusive
+                            value={fieldDecisions.closed ? "accept" : "reject"}
+                            onChange={(e, val) => {
+                              if (val) setFieldDecisions((prev) => ({ ...prev, closed: val === "accept" }));
+                            }}
+                          >
+                            <ToggleButton value="accept">Accept</ToggleButton>
+                            <ToggleButton value="reject">Reject</ToggleButton>
+                          </ToggleButtonGroup>
+                        }
+                      >
+                        {proposed.closed
+                          ? "🚫 This request marks the spot as PERMANENTLY CLOSED"
+                          : "This request marks the spot as reopened"}
+                      </Alert>
+                    )}
+
+                    {regularFields.length === 0 && !hasPhotoChanges && uploadingPhotos.length === 0 && unchangedPhotos.length === 0 && (
+                      <Alert severity="info">No reviewable field changes in this request.</Alert>
+                    )}
+
+                    {regularFields.length > 0 && (
+                      <Paper variant="outlined" sx={{ mb: hasPhotoChanges ? 2 : 0 }}>
+                        {regularFields.map((field, idx) => (
+                          <Box
+                            key={field}
+                            sx={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 2,
+                              p: 1.5,
+                              borderBottom: idx < regularFields.length - 1 ? "1px solid" : "none",
+                              borderColor: "divider",
+                            }}
+                          >
+                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                              <Typography variant="subtitle2">{fieldLabel(field)}</Typography>
+                              <Typography
+                                variant="body2"
+                                color="text.secondary"
+                                sx={{ textDecoration: "line-through" }}
+                              >
+                                {original[field] === undefined || original[field] === null || original[field] === ""
+                                  ? "(empty)"
+                                  : String(original[field])}
+                              </Typography>
+                              <Typography variant="body2" color="primary.main">
+                                {proposed[field] === undefined || proposed[field] === null || proposed[field] === ""
+                                  ? "(empty)"
+                                  : String(proposed[field])}
+                              </Typography>
+                            </Box>
+                            <ToggleButtonGroup
+                              size="small"
+                              exclusive
+                              value={fieldDecisions[field] ? "accept" : "reject"}
+                              onChange={(e, val) => {
+                                if (val) setFieldDecisions((prev) => ({ ...prev, [field]: val === "accept" }));
                               }}
-                              onError={(e) => { e.target.style.display = "none"; }}
-                            />
-                          ) : (
+                            >
+                              <ToggleButton value="accept">Accept</ToggleButton>
+                              <ToggleButton value="reject">Reject</ToggleButton>
+                            </ToggleButtonGroup>
+                          </Box>
+                        ))}
+                      </Paper>
+                    )}
+
+                    {(hasPhotoChanges || uploadingPhotos.length > 0 || unchangedPhotos.length > 0) && (
+                      <Box>
+                        <Typography variant="subtitle2" gutterBottom>
+                          Photo changes:
+                        </Typography>
+                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1.5 }}>
+                          {unchangedPhotos.map((photo) => (
+                            <Box key={`unchanged-${photo.r2_key}`}>
+                              <Box sx={{ position: "relative" }}>
+                                <Box
+                                  component="img"
+                                  src={`https://cruisapalooza.com/${photo.r2_key}`}
+                                  alt="Existing photo"
+                                  sx={{
+                                    width: 120,
+                                    height: 90,
+                                    objectFit: "cover",
+                                    borderRadius: 1,
+                                    border: "2px solid",
+                                    borderColor: "grey.400",
+                                  }}
+                                  onError={(e) => { e.target.style.display = "none"; }}
+                                />
+                                <Chip
+                                  label="Unchanged"
+                                  size="small"
+                                  sx={{ position: "absolute", top: 4, left: 4, bgcolor: "grey.300" }}
+                                />
+                              </Box>
+                            </Box>
+                          ))}
+                          {newPhotos.map((photo) => (
+                            <Box key={`new-${photo.r2_key}`}>
+                              <Box sx={{ position: "relative" }}>
+                                <Box
+                                  component="img"
+                                  src={`https://cruisapalooza.com/${photo.r2_key}`}
+                                  alt="New photo"
+                                  sx={{
+                                    width: 120,
+                                    height: 90,
+                                    objectFit: "cover",
+                                    borderRadius: 1,
+                                    border: "2px solid",
+                                    borderColor: "success.main",
+                                  }}
+                                  onError={(e) => { e.target.style.display = "none"; }}
+                                />
+                                <Chip
+                                  label="New"
+                                  size="small"
+                                  color="success"
+                                  sx={{ position: "absolute", top: 4, left: 4 }}
+                                />
+                              </Box>
+                              <ToggleButtonGroup
+                                size="small"
+                                exclusive
+                                fullWidth
+                                value={photoDecisions[`new:${photo.r2_key}`] ? "accept" : "reject"}
+                                onChange={(e, val) => {
+                                  if (val) setPhotoDecisions((prev) => ({ ...prev, [`new:${photo.r2_key}`]: val === "accept" }));
+                                }}
+                                sx={{ mt: 0.5 }}
+                              >
+                                <ToggleButton value="accept">Keep</ToggleButton>
+                                <ToggleButton value="reject">Drop</ToggleButton>
+                              </ToggleButtonGroup>
+                            </Box>
+                          ))}
+                          {removedPhotos.map((photo) => (
+                            <Box key={`removed-${photo.r2_key}`}>
+                              <Box sx={{ position: "relative" }}>
+                                <Box
+                                  component="img"
+                                  src={`https://cruisapalooza.com/${photo.r2_key}`}
+                                  alt="Removed photo"
+                                  sx={{
+                                    width: 120,
+                                    height: 90,
+                                    objectFit: "cover",
+                                    borderRadius: 1,
+                                    border: "2px solid",
+                                    borderColor: "error.main",
+                                    opacity: 0.6,
+                                  }}
+                                  onError={(e) => { e.target.style.display = "none"; }}
+                                />
+                                <Chip
+                                  label="Removed"
+                                  size="small"
+                                  color="error"
+                                  sx={{ position: "absolute", top: 4, left: 4 }}
+                                />
+                              </Box>
+                              <ToggleButtonGroup
+                                size="small"
+                                exclusive
+                                fullWidth
+                                value={photoDecisions[`removed:${photo.r2_key}`] ? "accept" : "reject"}
+                                onChange={(e, val) => {
+                                  if (val) setPhotoDecisions((prev) => ({ ...prev, [`removed:${photo.r2_key}`]: val === "accept" }));
+                                }}
+                                sx={{ mt: 0.5 }}
+                              >
+                                <ToggleButton value="accept">Remove</ToggleButton>
+                                <ToggleButton value="reject">Keep</ToggleButton>
+                              </ToggleButtonGroup>
+                            </Box>
+                          ))}
+                          {uploadingPhotos.map((_, idx) => (
                             <Box
-                              key={idx}
+                              key={`uploading-${idx}`}
                               sx={{
                                 width: 120,
                                 height: 90,
@@ -2174,13 +2453,13 @@ function Spots() {
                             >
                               Uploading…
                             </Box>
-                          )
-                        )}
+                          ))}
+                        </Box>
                       </Box>
-                    </Box>
-                  )}
-                </Box>
-              )}
+                    )}
+                  </Box>
+                );
+              })()}
               
               {selectedRequest.requestType === "create" && (
                 <Box>
@@ -2224,18 +2503,26 @@ function Spots() {
             color="error"
             onClick={() => handleReviewRequest("reject")}
           >
-            Reject
+            Reject Whole Request
           </Button>
+          {selectedRequest?.requestType === "update" && (
+            <Button
+              variant="contained"
+              onClick={handleSubmitFieldDecisions}
+            >
+              Submit Field Decisions
+            </Button>
+          )}
           <Button
             variant="contained"
             color="success"
             onClick={() => handleReviewRequest("approve")}
           >
-            Approve
+            Approve Whole Request
           </Button>
         </DialogActions>
       </Dialog>
-      
+
       {/* Bulk Region Update Dialog */}
       <Dialog open={regionDialogOpen} onClose={() => setRegionDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Bulk Set Region for All Spots</DialogTitle>
@@ -2429,81 +2716,6 @@ function Spots() {
               disabled={purgeLoading}
             >
               Permanently Delete {purgeResult.spots.length} Spot{purgeResult.spots.length !== 1 ? 's' : ''}
-            </Button>
-          )}
-        </DialogActions>
-      </Dialog>
-      
-      {/* Migrate Schema Dialog */}
-      <Dialog open={migrateDialogOpen} onClose={() => setMigrateDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>Migrate Spot Schema</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            This migration adds missing fields (region, deleted, updatedAt) to all spots in Firestore.
-            This is required for incremental sync to work correctly.
-          </Typography>
-          
-          {migrateLoading && (
-            <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
-              <CircularProgress />
-            </Box>
-          )}
-          
-          {!migrateLoading && migrateResult && (
-            <>
-              <Alert severity={migrateResult.migrated > 0 ? "warning" : "info"} sx={{ mb: 2 }}>
-                {migrateResult.message}
-              </Alert>
-              
-              <Stack spacing={2}>
-                <Box>
-                  <Typography variant="body2">
-                    <strong>Total spots:</strong> {migrateResult.total}
-                  </Typography>
-                  <Typography variant="body2">
-                    <strong>Need migration:</strong> {migrateResult.migrated}
-                  </Typography>
-                  <Typography variant="body2">
-                    <strong>Already up-to-date:</strong> {migrateResult.skipped}
-                  </Typography>
-                  {migrateResult.errors?.length > 0 && (
-                    <Typography variant="body2" color="error">
-                      <strong>Errors:</strong> {migrateResult.errors.length}
-                    </Typography>
-                  )}
-                </Box>
-                
-                {migrateResult.regionCounts && Object.keys(migrateResult.regionCounts).length > 0 && (
-                  <Box>
-                    <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1 }}>
-                      Region Distribution:
-                    </Typography>
-                    {Object.entries(migrateResult.regionCounts).map(([region, count]) => (
-                      <Typography key={region} variant="caption" display="block">
-                        {region}: {count}
-                      </Typography>
-                    ))}
-                  </Box>
-                )}
-              </Stack>
-            </>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => {
-            setMigrateDialogOpen(false);
-            setMigrateResult(null);
-          }}>
-            Cancel
-          </Button>
-          {migrateResult && migrateResult.migrated > 0 && migrateResult.dryRun && (
-            <Button
-              variant="contained"
-              color="warning"
-              onClick={() => handleMigrateSchema(false)}
-              disabled={migrateLoading}
-            >
-              Run Migration ({migrateResult.migrated} spots)
             </Button>
           )}
         </DialogActions>

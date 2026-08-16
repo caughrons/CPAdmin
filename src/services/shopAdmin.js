@@ -43,6 +43,17 @@ export async function rebuildCatalogState() {
   return callShop("shopRebuildCatalogState", {});
 }
 
+export async function setOrderFulfilled(orderId, fulfilled) {
+  return callShop("shopSetOrderFulfilled", { orderId, fulfilled });
+}
+
+// TODO(pre-launch): shopDeleteOrders permanently destroys payment/audit
+// records. Fine for wiping test data now; must be locked down (or removed
+// from the UI) before the shop goes live with real customer orders.
+export async function deleteOrders(orderIds) {
+  return callShop("shopDeleteOrders", { orderIds });
+}
+
 export async function uploadProductImage(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

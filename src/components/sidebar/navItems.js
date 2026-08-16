@@ -57,7 +57,7 @@ const manageSection = [
   {
     href: "/manage/waypoints",
     icon: Navigation,
-    title: "Waypoints",
+    title: "Voyages",
   },
   {
     href: "/manage/potential-spam",

@@ -4,6 +4,7 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
   Dialog,
@@ -15,11 +16,13 @@ import {
   Paper,
   Stack,
   Switch,
+  Tab,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableRow,
+  Tabs,
   TextField,
   Tooltip,
   Typography,
@@ -28,6 +31,7 @@ import DeleteIcon from "@mui/icons-material/Archive";
 import StarIcon from "@mui/icons-material/Star";
 import StarBorderIcon from "@mui/icons-material/StarBorder";
 import EditIcon from "@mui/icons-material/Edit";
+import RemoveCircleOutlineIcon from "@mui/icons-material/RemoveCircleOutline";
 import firebase from "firebase/app";
 import "firebase/firestore";
 import { firebaseConfig } from "@/config";
@@ -39,6 +43,8 @@ import {
   clearFeaturedProduct,
   rebuildCatalogState,
   uploadProductImage,
+  setOrderFulfilled,
+  deleteOrders,
 } from "@/services/shopAdmin";
 
 if (!firebase.apps.length) {
@@ -418,6 +424,16 @@ function ProductImageUpload({ imageUrl, onUploaded }) {
 
 // ── Product CRUD ──────────────────────────────────────────────────────────────
 
+const STANDARD_SHIRT_COLORS = [
+  "Black", "White", "Navy", "Royal Blue", "Light Blue", "Red", "Maroon",
+  "Forest Green", "Kelly Green", "Purple", "Orange", "Gold", "Pink",
+  "Charcoal", "Sport Grey", "Sand",
+];
+
+const STANDARD_SHIRT_SIZES = ["XXS", "XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL"];
+
+const EMPTY_VARIANT = { priceId: "", color: "", size: "", amount: "" };
+
 const EMPTY_PRODUCT = {
   productId: "",
   stripeProductId: "",
@@ -429,9 +445,12 @@ const EMPTY_PRODUCT = {
   active: true,
   requiresShipping: false,
   sortOrder: 0,
-  priceLabel: "Default",
-  priceAmount: "",   // human-readable (e.g. "9.99" for USD, "999" for JPY)
   currency: "usd",
+  variants: [{ ...EMPTY_VARIANT }],
+  selectedColors: [],
+  selectedSizes: [],
+  includeTall: false,
+  defaultVariantPrice: "",
 };
 
 function ProductsPanel() {
@@ -463,9 +482,11 @@ function ProductsPanel() {
 
   useEffect(() => { load(); }, [load]);
 
-  const openAdd = () => setDialog({ ...EMPTY_PRODUCT });
+  const openAdd = () => setDialog({ ...EMPTY_PRODUCT, variants: [{ ...EMPTY_VARIANT }] });
   const openEdit = (p) => {
-    const firstPrice = p.prices?.[0] ?? {};
+    const prices = p.prices?.length ? p.prices : [{}];
+    const currency = prices[0]?.currency ?? "usd";
+    const sizesUsed = prices.map((price) => price.size).filter(Boolean);
     setDialog({
       productId: p.id,
       stripeProductId: p.stripeProductId ?? "",
@@ -477,21 +498,89 @@ function ProductsPanel() {
       active: p.active ?? true,
       requiresShipping: p.requiresShipping ?? false,
       sortOrder: p.sortOrder ?? 0,
-      priceLabel: firstPrice.label ?? "Default",
-      priceAmount: stripeMinorUnitsToDisplay(firstPrice.amount ?? 0, firstPrice.currency ?? "usd"),
-      currency: firstPrice.currency ?? "usd",
+      currency,
+      variants: prices.map((price) => ({
+        priceId: price.priceId ?? "",
+        color: price.color ?? "",
+        size: price.size ?? "",
+        amount: stripeMinorUnitsToDisplay(price.amount ?? 0, price.currency ?? currency),
+      })),
+      selectedColors: [...new Set(prices.map((price) => price.color).filter((c) => STANDARD_SHIRT_COLORS.includes(c)))],
+      selectedSizes: [...new Set(sizesUsed
+        .map((s) => (s.endsWith("T") && STANDARD_SHIRT_SIZES.includes(s.slice(0, -1)) ? s.slice(0, -1) : s))
+        .filter((s) => STANDARD_SHIRT_SIZES.includes(s)))],
+      includeTall: sizesUsed.some((s) => s.endsWith("T") && STANDARD_SHIRT_SIZES.includes(s.slice(0, -1))),
+      defaultVariantPrice: "",
     });
+  };
+
+  const updateVariant = (index, patch) => {
+    setDialog((d) => ({
+      ...d,
+      variants: d.variants.map((v, i) => (i === index ? { ...v, ...patch } : v)),
+    }));
+  };
+
+  const addVariant = () => {
+    setDialog((d) => ({ ...d, variants: [...d.variants, { ...EMPTY_VARIANT }] }));
+  };
+
+  const toggleSelected = (key, value) => {
+    setDialog((d) => {
+      const list = d[key] ?? [];
+      return { ...d, [key]: list.includes(value) ? list.filter((v) => v !== value) : [...list, value] };
+    });
+  };
+
+  const generateVariants = () => {
+    setDialog((d) => {
+      const colors = d.selectedColors.length ? d.selectedColors : [""];
+      const baseSizes = d.selectedSizes.length ? d.selectedSizes : [""];
+      const sizeEntries = [];
+      for (const s of baseSizes) {
+        sizeEntries.push(s);
+        if (d.includeTall && s) sizeEntries.push(`${s}T`);
+      }
+
+      const isBlankPlaceholder = d.variants.length === 1
+        && !d.variants[0].color && !d.variants[0].size
+        && !d.variants[0].amount && !d.variants[0].priceId;
+      const baseVariants = isBlankPlaceholder ? [] : d.variants;
+
+      const existingKeys = new Set(baseVariants.map((v) => `${v.color.toLowerCase()}::${v.size.toLowerCase()}`));
+      const newRows = [];
+      for (const c of colors) {
+        for (const s of sizeEntries) {
+          const key = `${c.toLowerCase()}::${s.toLowerCase()}`;
+          if (existingKeys.has(key)) continue;
+          existingKeys.add(key);
+          newRows.push({ priceId: "", color: c, size: s, amount: d.defaultVariantPrice || "" });
+        }
+      }
+
+      return newRows.length ? { ...d, variants: [...baseVariants, ...newRows] } : d;
+    });
+  };
+
+  const removeVariant = (index) => {
+    setDialog((d) => ({ ...d, variants: d.variants.filter((_, i) => i !== index) }));
   };
 
   const handleSave = async () => {
     setSaving(true);
     setError(null);
     try {
-      const amount = amountToStripeMinorUnits(dialog.priceAmount, dialog.currency);
+      const currency = dialog.currency.toLowerCase().trim();
+      const variants = dialog.variants.map((v) => ({
+        priceId: v.priceId || undefined,
+        color: v.color.trim() || undefined,
+        size: v.size.trim() || undefined,
+        amount: amountToStripeMinorUnits(v.amount, currency),
+      }));
       await upsertProduct({
         ...dialog,
-        amount,
-        currency: dialog.currency.toLowerCase().trim(),
+        currency,
+        variants,
       });
       setDialog(null);
       await load();
@@ -557,7 +646,6 @@ function ProductsPanel() {
           </TableHead>
           <TableBody>
             {products.map((p) => {
-              const firstPrice = p.prices?.[0] ?? {};
               return (
                 <TableRow key={p.id}>
                   <TableCell>
@@ -576,9 +664,18 @@ function ProductsPanel() {
                     </Typography>
                   </TableCell>
                   <TableCell>
-                    {firstPrice.amount != null
-                      ? displayAmount(firstPrice.amount, firstPrice.currency)
-                      : "—"}
+                    {(() => {
+                      const prices = p.prices ?? [];
+                      if (prices.length === 0) return "—";
+                      if (prices.length === 1) return displayAmount(prices[0].amount, prices[0].currency);
+                      const amounts = prices.map((pr) => pr.amount);
+                      const min = Math.min(...amounts);
+                      const max = Math.max(...amounts);
+                      const currency = prices[0].currency;
+                      return min === max
+                        ? `${displayAmount(min, currency)} · ${prices.length} variants`
+                        : `${displayAmount(min, currency)}–${displayAmount(max, currency)} · ${prices.length} variants`;
+                    })()}
                   </TableCell>
                   <TableCell>
                     {(p.categoryIds ?? []).map((cid) => {
@@ -644,31 +741,132 @@ function ProductsPanel() {
               onUploaded={(url) => setDialog((d) => ({ ...d, imageUrl: url }))}
             />
 
-            <Typography variant="subtitle2">Pricing</Typography>
-            <Box display="grid" gap={2} gridTemplateColumns={{ xs: "1fr", md: "1fr 1fr 1fr" }}>
-              <TextField
-                label="Price amount"
-                value={dialog?.priceAmount ?? ""}
-                onChange={(e) => setDialog((d) => ({ ...d, priceAmount: e.target.value }))}
-                helperText={
-                  ZERO_DECIMAL_CURRENCIES.has((dialog?.currency ?? "").toLowerCase())
-                    ? "Zero-decimal currency — enter full units (e.g. 999 = ¥999)."
-                    : "Enter in major units (e.g. 9.99 = $9.99)."
-                }
-                required
-              />
-              <TextField
-                label="Currency (ISO 4217)"
-                value={dialog?.currency ?? "usd"}
-                onChange={(e) => setDialog((d) => ({ ...d, currency: e.target.value.toLowerCase() }))}
-                helperText="e.g. usd, eur, gbp, jpy, aud"
-              />
-              <TextField
-                label="Price label"
-                value={dialog?.priceLabel ?? "Default"}
-                onChange={(e) => setDialog((d) => ({ ...d, priceLabel: e.target.value }))}
-                helperText="Shown in variant selector (e.g. S, M, L or Default)."
-              />
+            <TextField
+              label="Currency (ISO 4217)"
+              value={dialog?.currency ?? "usd"}
+              onChange={(e) => setDialog((d) => ({ ...d, currency: e.target.value.toLowerCase() }))}
+              helperText="e.g. usd, eur, gbp, jpy, aud — shared by all variants below."
+              sx={{ maxWidth: 240 }}
+            />
+
+            <Box>
+              <Typography variant="subtitle2" gutterBottom>Colors &amp; Sizes</Typography>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                Check the colors and sizes this product comes in, then Generate Variants to create a
+                price row for every combination. Leave both unchecked for a single-option product.
+              </Typography>
+
+              <Typography variant="caption" fontWeight={600} display="block">Colors</Typography>
+              <Box display="flex" flexWrap="wrap">
+                {STANDARD_SHIRT_COLORS.map((c) => (
+                  <FormControlLabel
+                    key={c}
+                    sx={{ width: { xs: "50%", sm: "33.33%", md: "25%" }, mr: 0 }}
+                    control={
+                      <Checkbox
+                        size="small"
+                        checked={dialog?.selectedColors?.includes(c) ?? false}
+                        onChange={() => toggleSelected("selectedColors", c)}
+                      />
+                    }
+                    label={c}
+                  />
+                ))}
+              </Box>
+
+              <Typography variant="caption" fontWeight={600} display="block" sx={{ mt: 1 }}>Sizes</Typography>
+              <Box display="flex" flexWrap="wrap" alignItems="center">
+                {STANDARD_SHIRT_SIZES.map((s) => (
+                  <FormControlLabel
+                    key={s}
+                    sx={{ width: { xs: "33.33%", sm: "20%", md: "11%" }, mr: 0 }}
+                    control={
+                      <Checkbox
+                        size="small"
+                        checked={dialog?.selectedSizes?.includes(s) ?? false}
+                        onChange={() => toggleSelected("selectedSizes", s)}
+                      />
+                    }
+                    label={s}
+                  />
+                ))}
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      size="small"
+                      checked={dialog?.includeTall ?? false}
+                      onChange={(e) => setDialog((d) => ({ ...d, includeTall: e.target.checked }))}
+                    />
+                  }
+                  label="Include Tall (adds a Tall version of each checked size, e.g. LT)"
+                />
+              </Box>
+
+              <Box display="flex" gap={2} alignItems="center" sx={{ mt: 1.5 }}>
+                <TextField
+                  label="Default price for new variants"
+                  size="small"
+                  value={dialog?.defaultVariantPrice ?? ""}
+                  onChange={(e) => setDialog((d) => ({ ...d, defaultVariantPrice: e.target.value }))}
+                  helperText="Applied to generated rows; edit any row afterward."
+                  sx={{ maxWidth: 260 }}
+                />
+                <Button variant="outlined" size="small" onClick={generateVariants}>
+                  Generate Variants
+                </Button>
+              </Box>
+            </Box>
+
+            <Box>
+              <Typography variant="subtitle2" gutterBottom>Variants &amp; Pricing</Typography>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                Generated below from the Colors/Sizes checked above. You can also add, edit, or
+                remove rows directly — e.g. for a one-off color or size not in the standard lists.
+              </Typography>
+              <Stack spacing={1.5}>
+                {dialog?.variants?.map((v, i) => (
+                  <Box key={i} display="grid" gap={1} gridTemplateColumns="1fr 1fr 1fr auto" alignItems="center">
+                    <TextField
+                      label="Color (optional)"
+                      size="small"
+                      value={v.color}
+                      onChange={(e) => updateVariant(i, { color: e.target.value })}
+                    />
+                    <TextField
+                      label="Size (optional)"
+                      size="small"
+                      value={v.size}
+                      onChange={(e) => updateVariant(i, { size: e.target.value })}
+                    />
+                    <TextField
+                      label="Price amount"
+                      size="small"
+                      value={v.amount}
+                      onChange={(e) => updateVariant(i, { amount: e.target.value })}
+                      helperText={
+                        i === 0
+                          ? ZERO_DECIMAL_CURRENCIES.has((dialog?.currency ?? "").toLowerCase())
+                            ? "Full units (e.g. 999 = ¥999)"
+                            : "Major units (e.g. 9.99)"
+                          : undefined
+                      }
+                      required
+                    />
+                    <Tooltip title="Remove variant">
+                      <span>
+                        <IconButton
+                          size="small"
+                          onClick={() => removeVariant(i)}
+                          disabled={dialog.variants.length <= 1}
+                        >
+                          <RemoveCircleOutlineIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </Box>
+                ))}
+              </Stack>
+              <Button size="small" onClick={addVariant} sx={{ mt: 1 }}>+ Add Variant</Button>
             </Box>
 
             <Typography variant="subtitle2">Categories</Typography>
@@ -708,9 +906,245 @@ function ProductsPanel() {
   );
 }
 
+// ── Orders ────────────────────────────────────────────────────────────────────
+
+const ORDER_STATUS_COLOR = {
+  succeeded: "success",
+  pending: "default",
+  failed: "error",
+  refunded: "secondary",
+};
+
+function orderLineItems(order, productsById) {
+  if (Array.isArray(order.items) && order.items.length > 0) {
+    return order.items.map((item) => ({
+      name: item.name ?? "Item",
+      label: item.priceLabel && item.priceLabel !== "Default" ? item.priceLabel : null,
+      quantity: item.quantity ?? 1,
+      lineTotal: item.lineTotal ?? 0,
+      currency: item.currency ?? order.currency,
+    }));
+  }
+  const product = productsById[order.productId];
+  const priceEntry = product?.prices?.find((p) => p.priceId === order.priceId);
+  return [{
+    name: product?.name ?? "Item",
+    label: priceEntry?.label && priceEntry.label !== "Default" ? priceEntry.label : null,
+    quantity: 1,
+    lineTotal: order.amount ?? 0,
+    currency: order.currency,
+  }];
+}
+
+function OrdersPanel() {
+  const [orders, setOrders] = useState([]);
+  const [productsById, setProductsById] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [updating, setUpdating] = useState({});
+  const [unfulfilledOnly, setUnfulfilledOnly] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+  const [deleting, setDeleting] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [orderSnap, prodSnap] = await Promise.all([
+        db.collection("shop_orders").orderBy("createdAt", "desc").limit(200).get(),
+        db.collection("shop_catalog").get(),
+      ]);
+      setOrders(orderSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const byId = {};
+      prodSnap.docs.forEach((d) => { byId[d.id] = { id: d.id, ...d.data() }; });
+      setProductsById(byId);
+      setSelected(new Set());
+    } catch (e) {
+      setError(e?.message ?? String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleToggleFulfilled = async (order) => {
+    const next = !order.fulfilled;
+    setUpdating((u) => ({ ...u, [order.id]: true }));
+    setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, fulfilled: next } : o)));
+    try {
+      await setOrderFulfilled(order.id, next);
+    } catch (e) {
+      setError(e?.message ?? String(e));
+      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, fulfilled: !next } : o)));
+    } finally {
+      setUpdating((u) => ({ ...u, [order.id]: false }));
+    }
+  };
+
+  const visibleOrders = unfulfilledOnly ? orders.filter((o) => !o.fulfilled) : orders;
+  const allVisibleSelected = visibleOrders.length > 0 && visibleOrders.every((o) => selected.has(o.id));
+  const someVisibleSelected = visibleOrders.some((o) => selected.has(o.id));
+
+  const toggleOrderSelected = (orderId) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(orderId)) next.delete(orderId); else next.add(orderId);
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisible = () => {
+    setSelected((prev) => {
+      if (allVisibleSelected) {
+        const next = new Set(prev);
+        visibleOrders.forEach((o) => next.delete(o.id));
+        return next;
+      }
+      const next = new Set(prev);
+      visibleOrders.forEach((o) => next.add(o.id));
+      return next;
+    });
+  };
+
+  // TODO(pre-launch): bulk order deletion is only here to wipe test/junk
+  // orders during QA. It permanently destroys payment/audit records
+  // (shopDeleteOrders bypasses Firestore rules via the Admin SDK). Before the
+  // shop goes live, either remove this button, restrict it to
+  // pending/failed orders, or add a stronger confirmation step.
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    if (!window.confirm(`Permanently delete ${ids.length} order${ids.length === 1 ? "" : "s"}? This cannot be undone.`)) {
+      return;
+    }
+    setDeleting(true);
+    setError(null);
+    try {
+      await deleteOrders(ids);
+      setOrders((prev) => prev.filter((o) => !selected.has(o.id)));
+      setSelected(new Set());
+    } catch (e) {
+      setError(e?.message ?? String(e));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <Paper sx={{ p: 3 }}>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={1}>
+        <Typography variant="h6">Orders</Typography>
+        <Box display="flex" gap={2} alignItems="center">
+          {selected.size > 0 && (
+            <Button
+              variant="outlined"
+              color="error"
+              size="small"
+              onClick={handleBulkDelete}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting…" : `Delete Selected (${selected.size})`}
+            </Button>
+          )}
+          <FormControlLabel
+            control={<Switch checked={unfulfilledOnly} onChange={(e) => setUnfulfilledOnly(e.target.checked)} />}
+            label="Unfulfilled only"
+          />
+          <Button variant="outlined" size="small" onClick={load} disabled={loading}>Reload</Button>
+        </Box>
+      </Box>
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {loading ? <CircularProgress size={20} /> : (
+        <Box sx={{ overflowX: "auto" }}>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell padding="checkbox">
+                  <Checkbox
+                    size="small"
+                    checked={allVisibleSelected}
+                    indeterminate={someVisibleSelected && !allVisibleSelected}
+                    onChange={toggleSelectAllVisible}
+                  />
+                </TableCell>
+                <TableCell>Date</TableCell>
+                <TableCell>Order</TableCell>
+                <TableCell>Customer</TableCell>
+                <TableCell>Items</TableCell>
+                <TableCell>Total</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell align="center">Filled</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {visibleOrders.map((order) => {
+                const items = orderLineItems(order, productsById);
+                return (
+                  <TableRow key={order.id} selected={selected.has(order.id)}>
+                    <TableCell padding="checkbox">
+                      <Checkbox
+                        size="small"
+                        checked={selected.has(order.id)}
+                        onChange={() => toggleOrderSelected(order.id)}
+                      />
+                    </TableCell>
+                    <TableCell sx={{ whiteSpace: "nowrap" }}>
+                      {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleString() : "—"}
+                    </TableCell>
+                    <TableCell>
+                      <Tooltip title={order.id}>
+                        <Typography variant="body2" sx={{ fontFamily: "monospace", fontSize: 12 }}>
+                          {order.id.slice(0, 14)}…
+                        </Typography>
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" sx={{ fontFamily: "monospace", fontSize: 12 }}>
+                        {order.uid ? `${order.uid.slice(0, 10)}…` : "—"}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      {items.map((item, i) => (
+                        <Typography key={i} variant="body2">
+                          {item.quantity}× {item.name}{item.label ? ` (${item.label})` : ""}
+                        </Typography>
+                      ))}
+                    </TableCell>
+                    <TableCell>{displayAmount(order.amount, order.currency)}</TableCell>
+                    <TableCell>
+                      <Chip
+                        label={order.status ?? "unknown"}
+                        size="small"
+                        color={ORDER_STATUS_COLOR[order.status] ?? "default"}
+                      />
+                    </TableCell>
+                    <TableCell align="center">
+                      <Checkbox
+                        checked={order.fulfilled === true}
+                        onChange={() => handleToggleFulfilled(order)}
+                        disabled={updating[order.id]}
+                        size="small"
+                      />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+              {visibleOrders.length === 0 && (
+                <TableRow><TableCell colSpan={8} align="center">No orders yet.</TableCell></TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Box>
+      )}
+    </Paper>
+  );
+}
+
 // ── Page root ─────────────────────────────────────────────────────────────────
 
 function Ecommerce() {
+  const [tab, setTab] = useState(0);
   return (
     <React.Fragment>
       <Helmet title="Ecommerce" />
@@ -723,9 +1157,16 @@ function Ecommerce() {
             <strong>enabled = true</strong> in Global Status once products are ready.
           </Typography>
         </Box>
-        <GlobalStatusPanel />
-        <CategoriesPanel />
-        <ProductsPanel />
+        <Tabs value={tab} onChange={(_, v) => setTab(v)}>
+          <Tab label="Status" />
+          <Tab label="Categories" />
+          <Tab label="Products" />
+          <Tab label="Orders" />
+        </Tabs>
+        {tab === 0 && <GlobalStatusPanel />}
+        {tab === 1 && <CategoriesPanel />}
+        {tab === 2 && <ProductsPanel />}
+        {tab === 3 && <OrdersPanel />}
       </Box>
     </React.Fragment>
   );

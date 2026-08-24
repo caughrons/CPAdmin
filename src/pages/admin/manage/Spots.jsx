@@ -17,6 +17,7 @@ import {
   IconButton,
   InputLabel,
   LinearProgress,
+  Menu,
   MenuItem,
   Paper,
   Select,
@@ -154,7 +155,9 @@ function parseCSV(text) {
 // Mirrors deriveRegionFromCoordinates in functions/src/spotsAdmin.ts — used client-side
 // to warn when a chosen import region doesn't match a row's coordinates.
 function deriveRegionFromCoordinates(lat, lng) {
-  if (lat >= 10 && lat <= 25 && lng >= -90 && lng <= -60) return "Caribbean";
+  // 10°N-27.5°N (Trinidad up through northern Bahamas), 59°W-90°W (Barbados/
+  // Trinidad on the east edge) — matches the Spots Tool pipeline's bbox.
+  if (lat >= 10 && lat <= 27.5 && lng >= -90 && lng <= -59) return "Caribbean";
   if (lat >= 30 && lat <= 45 && lng >= 0 && lng <= 40) return "Mediterranean";
   if (lat >= -50 && lat <= 0 && ((lng >= 140 && lng <= 180) || (lng >= -180 && lng <= -120))) return "Pacific";
   if (lat >= 0 && lat <= 60 && lng >= 120 && lng <= 180) return "Pacific";
@@ -194,12 +197,50 @@ function validateSpotRow(row) {
   return errors;
 }
 
+// Invalid-row status chip for the CSV import grid — click opens a small menu
+// to either revalidate the row (after a raw-text fix) or explicitly skip it.
+// Defined once at module scope (not inline in a renderCell) so DataGrid
+// doesn't remount it, and its menu-open state, on every render.
+function InvalidRowChip({ onRevalidate, onSkip }) {
+  const [anchorEl, setAnchorEl] = useState(null);
+  return (
+    <>
+      <Chip
+        label="Invalid"
+        color="error"
+        size="small"
+        onClick={(e) => setAnchorEl(e.currentTarget)}
+        sx={{ cursor: "pointer" }}
+      />
+      <Menu anchorEl={anchorEl} open={!!anchorEl} onClose={() => setAnchorEl(null)}>
+        <MenuItem
+          onClick={() => {
+            onRevalidate();
+            setAnchorEl(null);
+          }}
+        >
+          Revalidate
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            onSkip();
+            setAnchorEl(null);
+          }}
+        >
+          Skip this row
+        </MenuItem>
+      </Menu>
+    </>
+  );
+}
+
 // ── Main Component ───────────────────────────────────────────────────────────
 
 // Scalar fields the granular review UI can diff and accept/reject individually.
 // Other proposedData keys (primaryImageIndex, mapSnapshotR2Key, etc.) aren't
 // reviewable here and default-accept, same as the whole-request Approve button.
 const REVIEWABLE_FIELDS = ["name", "type", "description", "latitude", "longitude", "closed"];
+const PURGE_LIST_PREVIEW_LIMIT = 200;
 
 function fieldLabel(field) {
   if (field === "closed") return "Closed status";
@@ -242,7 +283,8 @@ function Spots() {
   const [importProgress, setImportProgress] = useState(0);
   const [importResult, setImportResult] = useState(null);
   const [csvRowErrors, setCsvRowErrors] = useState({}); // { [_index]: string[] }
-  const [csvFilter, setCsvFilter] = useState("all"); // "all" | "valid" | "invalid"
+  const [skippedRows, setSkippedRows] = useState({}); // { [_index]: true } — invalid rows explicitly skipped by the admin
+  const [csvFilter, setCsvFilter] = useState("all"); // "all" | "valid" | "invalid" | "skipped"
   const [importRegion, setImportRegion] = useState("");
   const [regionMismatchDialogOpen, setRegionMismatchDialogOpen] = useState(false);
   const [regionMismatches, setRegionMismatches] = useState([]);
@@ -570,51 +612,61 @@ function Spots() {
       });
       
       setSnapshotDialogOpen(true);
-      
-      // Process each spot sequentially
-      for (let i = 0; i < result.spotIds.length; i++) {
-        // Check if cancellation was requested
-        const shouldCancel = await new Promise(resolve => {
-          setSnapshotProgress(prev => {
-            resolve(prev.cancelRequested);
-            return prev;
+
+      // Process spots with bounded concurrency instead of one at a time.
+      // Mapbox Static Images API bills per-request regardless of concurrency
+      // and allows 1,250 requests/min by default, so running several in
+      // parallel costs nothing extra and stays well under that limit.
+      const SNAPSHOT_CONCURRENCY = 8;
+      const spotIds = result.spotIds;
+      let nextIndex = 0;
+
+      const worker = async () => {
+        while (nextIndex < spotIds.length) {
+          // Check if cancellation was requested before claiming the next spot
+          const shouldCancel = await new Promise(resolve => {
+            setSnapshotProgress(prev => {
+              resolve(prev.cancelRequested);
+              return prev;
+            });
           });
-        });
-        
-        if (shouldCancel) {
-          console.log('Snapshot generation cancelled by user');
-          break;
+
+          if (shouldCancel) {
+            console.log('Snapshot generation cancelled by user');
+            return;
+          }
+
+          const spotId = spotIds[nextIndex++];
+
+          try {
+            const batchResult = await processSnapshotBatch(spotId);
+
+            setSnapshotProgress(prev => ({
+              ...prev,
+              processed: prev.processed + 1,
+              successful: batchResult.success ? prev.successful + 1 : prev.successful,
+              failed: batchResult.success ? prev.failed : prev.failed + 1,
+              errors: batchResult.success ? prev.errors : [...prev.errors, {
+                spotId,
+                spotName: batchResult.spotName || spotId,
+                error: batchResult.error
+              }]
+            }));
+          } catch (error) {
+            setSnapshotProgress(prev => ({
+              ...prev,
+              processed: prev.processed + 1,
+              failed: prev.failed + 1,
+              errors: [...prev.errors, { spotId, error: error.message }]
+            }));
+          }
         }
-        
-        const spotId = result.spotIds[i];
-        
-        try {
-          const batchResult = await processSnapshotBatch(spotId);
-          
-          setSnapshotProgress(prev => ({
-            ...prev,
-            processed: prev.processed + 1,
-            successful: batchResult.success ? prev.successful + 1 : prev.successful,
-            failed: batchResult.success ? prev.failed : prev.failed + 1,
-            errors: batchResult.success ? prev.errors : [...prev.errors, { 
-              spotId, 
-              spotName: batchResult.spotName || spotId,
-              error: batchResult.error 
-            }]
-          }));
-        } catch (error) {
-          setSnapshotProgress(prev => ({
-            ...prev,
-            processed: prev.processed + 1,
-            failed: prev.failed + 1,
-            errors: [...prev.errors, { spotId, error: error.message }]
-          }));
-        }
-        
-        // Small delay between requests
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-      
+      };
+
+      await Promise.all(
+        Array.from({ length: Math.min(SNAPSHOT_CONCURRENCY, spotIds.length) }, () => worker())
+      );
+
       setSnapshotProgress(prev => ({ ...prev, isProcessing: false }));
       
     } catch (error) {
@@ -712,21 +764,34 @@ function Spots() {
     
     setBulkDeleteDialogOpen(false);
     setLoading(true);
-    
+
     try {
       let successCount = 0;
       let errorCount = 0;
-      
-      for (const spotId of selectedRows) {
-        try {
-          await manageSpot(spotId, 'softDelete');
-          successCount++;
-        } catch (e) {
-          console.error(`Failed to delete spot ${spotId}:`, e);
-          errorCount++;
+
+      // Bounded concurrency instead of one-at-a-time — each worker claims the
+      // next unclaimed spot until the list is exhausted.
+      const BULK_DELETE_CONCURRENCY = 8;
+      const spotIds = selectedRows;
+      let nextIndex = 0;
+
+      const worker = async () => {
+        while (nextIndex < spotIds.length) {
+          const spotId = spotIds[nextIndex++];
+          try {
+            await manageSpot(spotId, 'softDelete');
+            successCount++;
+          } catch (e) {
+            console.error(`Failed to delete spot ${spotId}:`, e);
+            errorCount++;
+          }
         }
-      }
-      
+      };
+
+      await Promise.all(
+        Array.from({ length: Math.min(BULK_DELETE_CONCURRENCY, spotIds.length) }, () => worker())
+      );
+
       alert(`Bulk delete complete: ${successCount} deleted, ${errorCount} failed`);
       setSelectedRows([]);
       await loadSpots();
@@ -758,6 +823,7 @@ function Spots() {
       });
       setCsvData(parsed);
       setCsvRowErrors(errorsMap);
+      setSkippedRows({});
       setCsvFilter("all");
       setImportRegion("");
       setRegionMismatches([]);
@@ -1087,14 +1153,19 @@ function Spots() {
     if (csvStep === 2 || csvStep === 3) {
       const validRows = csvData.rows.filter(row => (csvRowErrors[row._index] || []).length === 0);
       const invalidRows = csvData.rows.filter(row => (csvRowErrors[row._index] || []).length > 0);
+      const skippedRowsList = invalidRows.filter(row => skippedRows[row._index]);
       const filteredRows =
-        csvFilter === "valid" ? validRows : csvFilter === "invalid" ? invalidRows : csvData.rows;
+        csvFilter === "valid" ? validRows
+        : csvFilter === "invalid" ? invalidRows
+        : csvFilter === "skipped" ? skippedRowsList
+        : csvData.rows;
 
       return (
         <Box sx={{ p: 2 }}>
           <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 1 }}>
             <Alert severity="info">
               {validRows.length} valid, {invalidRows.length} invalid
+              {skippedRowsList.length > 0 && ` (${skippedRowsList.length} skipped)`}
             </Alert>
             <FormControl size="small" sx={{ minWidth: 220 }}>
               <InputLabel id="import-region-label">Assign Region</InputLabel>
@@ -1124,6 +1195,7 @@ function Spots() {
               <ToggleButton value="all">All ({csvData.rows.length})</ToggleButton>
               <ToggleButton value="valid">Valid ({validRows.length})</ToggleButton>
               <ToggleButton value="invalid">Invalid ({invalidRows.length})</ToggleButton>
+              <ToggleButton value="skipped">Skipped ({skippedRowsList.length})</ToggleButton>
             </ToggleButtonGroup>
             <Box sx={{ flexGrow: 1 }} />
             <Button
@@ -1176,23 +1248,53 @@ function Spots() {
                 })),
                 {
                   field: "_valid",
-                  headerName: "Valid",
+                  headerName: "Status",
                   width: 110,
                   sortable: false,
                   renderCell: (params) => {
                     const index = params.row._index;
                     const errors = csvRowErrors[index] || [];
                     const isValid = errors.length === 0;
+                    const isSkipped = !isValid && !!skippedRows[index];
+
+                    if (isSkipped) {
+                      return (
+                        <Tooltip title="Click to unskip this row">
+                          <Chip
+                            label="Skipped"
+                            size="small"
+                            onClick={() =>
+                              setSkippedRows((prev) => {
+                                const next = { ...prev };
+                                delete next[index];
+                                return next;
+                              })
+                            }
+                            sx={{ cursor: "pointer" }}
+                          />
+                        </Tooltip>
+                      );
+                    }
+
+                    if (isValid) {
+                      return (
+                        <Tooltip title="Click to revalidate this row">
+                          <Chip
+                            label="Valid"
+                            color="success"
+                            size="small"
+                            onClick={() => revalidateRow(index)}
+                            sx={{ cursor: "pointer" }}
+                          />
+                        </Tooltip>
+                      );
+                    }
+
                     return (
-                      <Tooltip title="Click to revalidate this row">
-                        <Chip
-                          label={isValid ? "Valid" : "Invalid"}
-                          color={isValid ? "success" : "error"}
-                          size="small"
-                          onClick={() => revalidateRow(index)}
-                          sx={{ cursor: "pointer" }}
-                        />
-                      </Tooltip>
+                      <InvalidRowChip
+                        onRevalidate={() => revalidateRow(index)}
+                        onSkip={() => setSkippedRows((prev) => ({ ...prev, [index]: true }))}
+                      />
                     );
                   },
                 },
@@ -1409,6 +1511,25 @@ function Spots() {
                   <MenuItem value="">All</MenuItem>
                   <MenuItem value="true">Closed</MenuItem>
                   <MenuItem value="false">Open</MenuItem>
+                </Select>
+              </FormControl>
+
+              <FormControl size="small">
+                <InputLabel>Snapshot</InputLabel>
+                <Select
+                  value={filters.hasSnapshot === undefined ? "" : String(filters.hasSnapshot)}
+                  label="Snapshot"
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setFilters({
+                      ...filters,
+                      hasSnapshot: val === "" ? undefined : val === "true",
+                    });
+                  }}
+                >
+                  <MenuItem value="">All</MenuItem>
+                  <MenuItem value="true">Has Snapshot</MenuItem>
+                  <MenuItem value="false">No Snapshot</MenuItem>
                 </Select>
               </FormControl>
 
@@ -2685,7 +2806,12 @@ function Spots() {
                   </Typography>
                   
                   <Box sx={{ maxHeight: 400, overflow: 'auto' }}>
-                    {purgeResult.spots.map((spot, idx) => (
+                    {/* Rendering a card per spot is fine for a handful of deletes, but a purge
+                        can turn up thousands of accumulated soft-deletes — an unbounded list
+                        of MUI Papers at that size freezes the tab before the delete button is
+                        even clickable. Cap what's rendered; the count above still reflects the
+                        true total and the delete action operates on all of them regardless. */}
+                    {purgeResult.spots.slice(0, PURGE_LIST_PREVIEW_LIMIT).map((spot, idx) => (
                       <Paper key={idx} sx={{ p: 2, mb: 1, bgcolor: 'background.default' }}>
                         <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
                           {spot.name}
@@ -2695,6 +2821,11 @@ function Spots() {
                         </Typography>
                       </Paper>
                     ))}
+                    {purgeResult.spots.length > PURGE_LIST_PREVIEW_LIMIT && (
+                      <Typography variant="body2" color="text.secondary" sx={{ p: 1 }}>
+                        …and {purgeResult.spots.length - PURGE_LIST_PREVIEW_LIMIT} more
+                      </Typography>
+                    )}
                   </Box>
                 </>
               )}

@@ -34,7 +34,7 @@ import {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function r2Url(r2Key) {
-  return r2Key ? `https://cruisapalooza.com/${r2Key}` : null;
+  return r2Key ? `https://images.cruisapalooza.com/${r2Key}` : null;
 }
 
 // createdAt/updatedAt come from the mobile app as either an ISO string

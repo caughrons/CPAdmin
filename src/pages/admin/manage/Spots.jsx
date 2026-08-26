@@ -1855,7 +1855,7 @@ function Spots() {
                       {spotDetail.spot.mapSnapshotR2Key ? (
                         <Box
                           component="img"
-                          src={`https://cruisapalooza.com/${spotDetail.spot.mapSnapshotR2Key}`}
+                          src={`https://images.cruisapalooza.com/${spotDetail.spot.mapSnapshotR2Key}`}
                           alt="Map snapshot"
                           sx={{
                             width: '100%',
@@ -1944,7 +1944,7 @@ function Spots() {
                             >
                               <Box
                                 component="img"
-                                src={image.r2Key ? `https://cruisapalooza.com/${image.r2Key}` : image.url}
+                                src={image.r2Key ? `https://images.cruisapalooza.com/${image.r2Key}` : image.url}
                                 alt={`Spot image ${idx + 1}`}
                                 sx={{
                                   position: 'absolute',
@@ -2458,7 +2458,7 @@ function Spots() {
                               <Box sx={{ position: "relative" }}>
                                 <Box
                                   component="img"
-                                  src={`https://cruisapalooza.com/${photo.r2_key}`}
+                                  src={`https://images.cruisapalooza.com/${photo.r2_key}`}
                                   alt="Existing photo"
                                   sx={{
                                     width: 120,
@@ -2483,7 +2483,7 @@ function Spots() {
                               <Box sx={{ position: "relative" }}>
                                 <Box
                                   component="img"
-                                  src={`https://cruisapalooza.com/${photo.r2_key}`}
+                                  src={`https://images.cruisapalooza.com/${photo.r2_key}`}
                                   alt="New photo"
                                   sx={{
                                     width: 120,
@@ -2522,7 +2522,7 @@ function Spots() {
                               <Box sx={{ position: "relative" }}>
                                 <Box
                                   component="img"
-                                  src={`https://cruisapalooza.com/${photo.r2_key}`}
+                                  src={`https://images.cruisapalooza.com/${photo.r2_key}`}
                                   alt="Removed photo"
                                   sx={{
                                     width: 120,

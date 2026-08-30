@@ -156,7 +156,7 @@ async function seedPromptDocument() {
     prompt: INITIAL_PROMPT,
     previousPrompt: null,
     provider: "claude",
-    providerModel: "claude-sonnet-4-6",
+    providerModel: "claude-sonnet-5",
     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
   });
@@ -186,19 +186,19 @@ export async function saveCruisnewsPrompt(
   provider,
   providerModel,
   imageBoilerplate,
-  imagePromptConfig,
+  imagePromptConfig
 ) {
   await PROMPT_DOC_REF.set(
     {
       prompt,
       previousPrompt: previousPrompt ?? null,
       provider: provider ?? "claude",
-      providerModel: providerModel ?? "claude-sonnet-4-6",
+      providerModel: providerModel ?? "claude-sonnet-5",
       imageBoilerplate,
       imagePromptConfig,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     },
-    { merge: true },
+    { merge: true }
   );
 }
 
@@ -215,5 +215,15 @@ export async function deleteCruisnewsStory(storyId) {
     timeout: 120000,
   });
   const result = await callable({ storyId });
+  return result.data;
+}
+
+// Manual override for the normal drip-feed schedule: immediately release every
+// story still in "pending" status.
+export async function releaseAllPendingCruisnewsStories() {
+  const callable = functions.httpsCallable("releaseAllPendingStories", {
+    timeout: 120000,
+  });
+  const result = await callable();
   return result.data;
 }

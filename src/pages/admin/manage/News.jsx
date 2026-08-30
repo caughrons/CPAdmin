@@ -31,6 +31,7 @@ import {
   deleteCruisnewsStory,
   runCruisnewsPrompt,
   saveCruisnewsPrompt,
+  releaseAllPendingCruisnewsStories,
 } from "@/services/cruisnewsAdmin";
 import { AuthContext } from "@/contexts/FirebaseAuthContext";
 import firebase from "firebase/app";
@@ -95,6 +96,9 @@ function News() {
   const [deleteSelectedLoading, setDeleteSelectedLoading] = useState(false);
   const [deleteSelectedAnchorEl, setDeleteSelectedAnchorEl] = useState(null);
   const [selectedStoryIds, setSelectedStoryIds] = useState([]);
+  const [releaseAllLoading, setReleaseAllLoading] = useState(false);
+  const [releaseAllError, setReleaseAllError] = useState(null);
+  const [releaseAllAnchorEl, setReleaseAllAnchorEl] = useState(null);
   const [filters, setFilters] = useState({
     status: "all",
     image: "all",
@@ -118,15 +122,18 @@ function News() {
   const [promptUpdatedAt, setPromptUpdatedAt] = useState(null);
   const [imageBoilerplate, setImageBoilerplate] = useState("");
   const [savedImageBoilerplate, setSavedImageBoilerplate] = useState("");
-  const [previousImageBoilerplate, setPreviousImageBoilerplate] = useState(null);
+  const [previousImageBoilerplate, setPreviousImageBoilerplate] =
+    useState(null);
   const [imagePromptConfig, setImagePromptConfig] = useState("");
   const [savedImagePromptConfig, setSavedImagePromptConfig] = useState("");
-  const [previousImagePromptConfig, setPreviousImagePromptConfig] = useState(null);
+  const [previousImagePromptConfig, setPreviousImagePromptConfig] =
+    useState(null);
   const [provider, setProvider] = useState("claude");
   const [savedProvider, setSavedProvider] = useState("claude");
   const [previousProvider, setPreviousProvider] = useState(null);
-  const [providerModel, setProviderModel] = useState("claude-sonnet-4-6");
-  const [savedProviderModel, setSavedProviderModel] = useState("claude-sonnet-4-6");
+  const [providerModel, setProviderModel] = useState("claude-sonnet-5");
+  const [savedProviderModel, setSavedProviderModel] =
+    useState("claude-sonnet-5");
   const [previousProviderModel, setPreviousProviderModel] = useState(null);
   const [runLoading, setRunLoading] = useState(false);
   const [runError, setRunError] = useState(null);
@@ -160,7 +167,7 @@ function News() {
       const currentImageBoilerplate = data?.imageBoilerplate ?? "";
       const currentImagePromptConfig = data?.imagePromptConfig ?? "";
       const currentProvider = data?.provider ?? "claude";
-      const currentProviderModel = data?.providerModel ?? "claude-sonnet-4-6";
+      const currentProviderModel = data?.providerModel ?? "claude-sonnet-5";
 
       setPromptText(currentPrompt);
       setSavedPrompt(currentPrompt);
@@ -212,7 +219,9 @@ function News() {
       const failed = results.filter((result) => result.status === "rejected");
       if (failed.length) {
         setStoryDeleteError(
-          `Failed to delete ${failed.length} stor${failed.length === 1 ? "y" : "ies"}.`
+          `Failed to delete ${failed.length} stor${
+            failed.length === 1 ? "y" : "ies"
+          }.`
         );
       }
       await loadStories();
@@ -225,54 +234,92 @@ function News() {
     }
   }, [closeDeleteSelected, loadStories, selectedStoryIds]);
 
+  const pendingCount = useMemo(
+    () => stories.filter((story) => story.status !== "released").length,
+    [stories]
+  );
+
+  const openReleaseAll = useCallback((event) => {
+    setReleaseAllAnchorEl(event.currentTarget);
+  }, []);
+
+  const closeReleaseAll = useCallback(() => {
+    setReleaseAllAnchorEl(null);
+  }, []);
+
+  const handleReleaseAllPending = useCallback(async () => {
+    setReleaseAllLoading(true);
+    setReleaseAllError(null);
+    try {
+      await releaseAllPendingCruisnewsStories();
+      await loadStories();
+    } catch (e) {
+      setReleaseAllError(e?.message ?? String(e));
+    } finally {
+      setReleaseAllLoading(false);
+      closeReleaseAll();
+    }
+  }, [closeReleaseAll, loadStories]);
+
   // Monitor News Feed enabled status
   useEffect(() => {
-    console.log('News Feed useEffect - isInitialized:', isInitialized, 'isAuthenticated:', isAuthenticated);
-    
+    console.log(
+      "News Feed useEffect - isInitialized:",
+      isInitialized,
+      "isAuthenticated:",
+      isAuthenticated
+    );
+
     if (!isInitialized || !isAuthenticated) {
-      console.log('News Feed - waiting for auth initialization');
+      console.log("News Feed - waiting for auth initialization");
       return;
     }
-    
-    console.log('News Feed - setting up RTDB listener');
-    const ref = rtdb.ref('admin/cruisnews_feed_enabled');
-    const listener = ref.on('value', async (snapshot) => {
+
+    console.log("News Feed - setting up RTDB listener");
+    const ref = rtdb.ref("admin/cruisnews_feed_enabled");
+    const listener = ref.on("value", async (snapshot) => {
       const value = snapshot.val();
-      console.log('News Feed - RTDB value received:', value);
-      
+      console.log("News Feed - RTDB value received:", value);
+
       if (value === null) {
         // Initialize to true if not set (scheduled function is already running daily)
-        console.log('News Feed - initializing to true (feed is currently running)');
+        console.log(
+          "News Feed - initializing to true (feed is currently running)"
+        );
         try {
           await ref.set(true);
           setNewsFeedEnabled(true);
         } catch (error) {
-          console.error('Failed to initialize news feed status:', error);
+          console.error("Failed to initialize news feed status:", error);
           setNewsFeedEnabled(true);
         }
       } else {
         setNewsFeedEnabled(value);
       }
     });
-    
+
     return () => {
-      console.log('News Feed - cleaning up RTDB listener');
-      ref.off('value', listener);
+      console.log("News Feed - cleaning up RTDB listener");
+      ref.off("value", listener);
     };
   }, [isInitialized, isAuthenticated]);
 
   const toggleNewsFeed = useCallback(async () => {
     if (!isAuthenticated || newsFeedEnabled === null) return;
-    
+
     const newValue = !newsFeedEnabled;
     setNewsFeedToggling(true);
-    
+
     try {
-      await rtdb.ref('admin/cruisnews_feed_enabled').set(newValue);
+      await rtdb.ref("admin/cruisnews_feed_enabled").set(newValue);
       // State will update via the listener
     } catch (error) {
-      console.error('Failed to toggle news feed:', error);
-      alert(`Failed to ${newValue ? 'start' : 'stop'} News Feed. Please check your connection and try again.`);
+      console.error("Failed to toggle news feed:", error);
+      alert(
+        `Failed to ${
+          newValue ? "start" : "stop"
+        } News Feed. Please check your connection and try again.`
+      );
     } finally {
       setNewsFeedToggling(false);
     }
@@ -298,7 +345,9 @@ function News() {
     try {
       JSON.parse(trimmedImagePromptConfig);
     } catch (error) {
-      setPromptError(`Invalid image prompt config JSON: ${error?.message ?? String(error)}`);
+      setPromptError(
+        `Invalid image prompt config JSON: ${error?.message ?? String(error)}`
+      );
       return;
     }
     setPromptSaving(true);
@@ -311,7 +360,7 @@ function News() {
         provider,
         providerModel,
         trimmedBoilerplate,
-        trimmedImagePromptConfig,
+        trimmedImagePromptConfig
       );
       setPreviousPrompt(savedPrompt);
       setSavedPrompt(promptText);
@@ -345,8 +394,10 @@ function News() {
 
   const handleRevertPrompt = useCallback(async () => {
     if (!previousPrompt) return;
-    const nextImageBoilerplate = previousImageBoilerplate ?? savedImageBoilerplate;
-    const nextImagePromptConfig = previousImagePromptConfig ?? savedImagePromptConfig;
+    const nextImageBoilerplate =
+      previousImageBoilerplate ?? savedImageBoilerplate;
+    const nextImagePromptConfig =
+      previousImagePromptConfig ?? savedImagePromptConfig;
     const nextProvider = previousProvider ?? savedProvider;
     const nextProviderModel = previousProviderModel ?? savedProviderModel;
     setPromptSaving(true);
@@ -359,7 +410,7 @@ function News() {
         nextProvider,
         nextProviderModel,
         nextImageBoilerplate,
-        nextImagePromptConfig,
+        nextImagePromptConfig
       );
       setPromptText(previousPrompt);
       setSavedPrompt(previousPrompt);
@@ -405,9 +456,14 @@ function News() {
       const result = await runCruisnewsPrompt();
       const storyCount = result?.storyCount ?? 0;
       const stories = Array.isArray(result?.stories) ? result.stories : [];
-      const fallbackImageCount = stories.filter((story) => story?.generateImage === true).length;
-      const imageCount = result?.imageCount ?? result?.imagesCreated ?? fallbackImageCount;
-      setRunSuccess(`Generated ${storyCount} stor${storyCount === 1 ? "y" : "ies"}.`);
+      const fallbackImageCount = stories.filter(
+        (story) => story?.generateImage === true
+      ).length;
+      const imageCount =
+        result?.imageCount ?? result?.imagesCreated ?? fallbackImageCount;
+      setRunSuccess(
+        `Generated ${storyCount} stor${storyCount === 1 ? "y" : "ies"}.`
+      );
       setRunMetrics({ storyCount, imageCount, message: null });
       await loadStories();
     } catch (e) {
@@ -420,16 +476,24 @@ function News() {
   }, [loadStories]);
 
   const runSummaryVisible =
-    !runLoading && (runError || runMetrics.storyCount !== null || runMetrics.imageCount !== null);
+    !runLoading &&
+    (runError ||
+      runMetrics.storyCount !== null ||
+      runMetrics.imageCount !== null);
   const runSummaryLabel = runError
-    ? `Run failed • Stories: ${runMetrics.storyCount ?? 0} • Images: ${runMetrics.imageCount ?? 0}`
-    : `Stories: ${runMetrics.storyCount ?? 0} • Images: ${runMetrics.imageCount ?? 0}`;
+    ? `Run failed • Stories: ${runMetrics.storyCount ?? 0} • Images: ${
+        runMetrics.imageCount ?? 0
+      }`
+    : `Stories: ${runMetrics.storyCount ?? 0} • Images: ${
+        runMetrics.imageCount ?? 0
+      }`;
   const runSummaryBackground = runError
     ? "error.main"
     : runMetrics.storyCount === 0
-      ? "warning.main"
-      : "success.main";
-  const runSummaryColor = runError || runMetrics.storyCount !== 0 ? "common.white" : "text.primary";
+    ? "warning.main"
+    : "success.main";
+  const runSummaryColor =
+    runError || runMetrics.storyCount !== 0 ? "common.white" : "text.primary";
 
   const regions = useMemo(() => {
     const values = new Set();
@@ -471,7 +535,9 @@ function News() {
       return date ? date.getTime() : 0;
     };
 
-    unreleased.sort((a, b) => toMs(a.scheduledRelease) - toMs(b.scheduledRelease));
+    unreleased.sort(
+      (a, b) => toMs(a.scheduledRelease) - toMs(b.scheduledRelease)
+    );
     released.sort((a, b) => {
       const aDate = toMs(a.actualRelease) || toMs(a.createdAt);
       const bDate = toMs(b.actualRelease) || toMs(b.createdAt);
@@ -526,7 +592,9 @@ function News() {
     stories.forEach((story) => {
       const created = toDate(story.createdAt);
       if (!created) return;
-      const key = getDayKey(new Date(created.getFullYear(), created.getMonth(), created.getDate()));
+      const key = getDayKey(
+        new Date(created.getFullYear(), created.getMonth(), created.getDate())
+      );
       if (storiesCount[key] === undefined) return;
       storiesCount[key] += 1;
       if (story.imageUrl) {
@@ -535,7 +603,9 @@ function News() {
     });
 
     return {
-      labels: days.map((d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" })),
+      labels: days.map((d) =>
+        d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+      ),
       datasets: [
         {
           label: "Stories",
@@ -762,27 +832,55 @@ function News() {
   return (
     <React.Fragment>
       <Helmet title="News" />
-      <Box mb={3} display="flex" alignItems="flex-start" justifyContent="space-between" flexWrap="wrap" gap={2}>
+      <Box
+        mb={3}
+        display="flex"
+        alignItems="flex-start"
+        justifyContent="space-between"
+        flexWrap="wrap"
+        gap={2}
+      >
         <Box>
           <Typography variant="h3" gutterBottom>
             CruisNews
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Manage daily stories, publishing schedule, imagery, and the generation prompt.
+            Manage daily stories, publishing schedule, imagery, and the
+            generation prompt.
           </Typography>
         </Box>
-        <Tooltip title={
-          !isInitialized ? "Loading..." :
-          !isAuthenticated ? "Sign in required to control News Feed" :
-          newsFeedEnabled === null ? "Loading feed status..." : 
-          newsFeedEnabled ? "Stop daily news gathering" : "Start daily news gathering"
-        }>
+        <Tooltip
+          title={
+            !isInitialized
+              ? "Loading..."
+              : !isAuthenticated
+              ? "Sign in required to control News Feed"
+              : newsFeedEnabled === null
+              ? "Loading feed status..."
+              : newsFeedEnabled
+              ? "Stop daily news gathering"
+              : "Start daily news gathering"
+          }
+        >
           <span>
             <Button
               variant="contained"
               color={newsFeedEnabled ? "error" : "success"}
-              disabled={!isInitialized || !isAuthenticated || newsFeedEnabled === null || newsFeedToggling}
-              startIcon={newsFeedToggling ? <CircularProgress size={16} color="inherit" /> : newsFeedEnabled ? <Square size={16} /> : <Play size={16} />}
+              disabled={
+                !isInitialized ||
+                !isAuthenticated ||
+                newsFeedEnabled === null ||
+                newsFeedToggling
+              }
+              startIcon={
+                newsFeedToggling ? (
+                  <CircularProgress size={16} color="inherit" />
+                ) : newsFeedEnabled ? (
+                  <Square size={16} />
+                ) : (
+                  <Play size={16} />
+                )
+              }
               onClick={toggleNewsFeed}
               sx={{ minWidth: 160, fontWeight: 600 }}
             >
@@ -797,16 +895,68 @@ function News() {
       </Box>
 
       {storiesError && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setStoriesError(null)}>
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          onClose={() => setStoriesError(null)}
+        >
           {storiesError}
         </Alert>
       )}
 
       {storyDeleteError && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setStoryDeleteError(null)}>
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          onClose={() => setStoryDeleteError(null)}
+        >
           {storyDeleteError}
         </Alert>
       )}
+
+      {releaseAllError && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          onClose={() => setReleaseAllError(null)}
+        >
+          {releaseAllError}
+        </Alert>
+      )}
+
+      <Popover
+        open={Boolean(releaseAllAnchorEl)}
+        anchorEl={releaseAllAnchorEl}
+        onClose={closeReleaseAll}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+        transformOrigin={{ vertical: "top", horizontal: "center" }}
+      >
+        <Box sx={{ p: 2, maxWidth: 340 }}>
+          <Typography variant="subtitle2">
+            Release all pending stories now?
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            {pendingCount} pending stor{pendingCount === 1 ? "y" : "ies"} will
+            go live immediately, overriding their scheduled release times.
+          </Typography>
+          <Box
+            sx={{ mt: 2, display: "flex", justifyContent: "flex-end", gap: 1 }}
+          >
+            <Button size="small" onClick={closeReleaseAll}>
+              Cancel
+            </Button>
+            <Button
+              size="small"
+              variant="contained"
+              color="secondary"
+              onClick={handleReleaseAllPending}
+              disabled={!pendingCount || releaseAllLoading}
+            >
+              {releaseAllLoading ? "Releasing..." : "Release All"}
+            </Button>
+          </Box>
+        </Box>
+      </Popover>
 
       <Popover
         open={Boolean(deleteSelectedAnchorEl)}
@@ -818,10 +968,13 @@ function News() {
         <Box sx={{ p: 2, maxWidth: 320 }}>
           <Typography variant="subtitle2">Delete selected stories?</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            {selectedStoryIds.length} stor{selectedStoryIds.length === 1 ? "y" : "ies"} will be
-            removed along with any associated images.
+            {selectedStoryIds.length} stor
+            {selectedStoryIds.length === 1 ? "y" : "ies"} will be removed along
+            with any associated images.
           </Typography>
-          <Box sx={{ mt: 2, display: "flex", justifyContent: "flex-end", gap: 1 }}>
+          <Box
+            sx={{ mt: 2, display: "flex", justifyContent: "flex-end", gap: 1 }}
+          >
             <Button size="small" onClick={closeDeleteSelected}>
               Cancel
             </Button>
@@ -844,7 +997,15 @@ function News() {
             <Tab label="Stories" />
             <Tab label="Prompt & Analytics" />
           </Tabs>
-          <Box sx={{ pr: 2, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+          <Box
+            sx={{
+              pr: 2,
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              flexWrap: "wrap",
+            }}
+          >
             {runSummaryVisible && (
               <Chip
                 size="small"
@@ -877,7 +1038,10 @@ function News() {
                   value={filters.status}
                   label="Status"
                   onChange={(event) =>
-                    setFilters((prev) => ({ ...prev, status: event.target.value }))
+                    setFilters((prev) => ({
+                      ...prev,
+                      status: event.target.value,
+                    }))
                   }
                 >
                   {STATUS_OPTIONS.map((opt) => (
@@ -894,7 +1058,10 @@ function News() {
                   value={filters.image}
                   label="Image"
                   onChange={(event) =>
-                    setFilters((prev) => ({ ...prev, image: event.target.value }))
+                    setFilters((prev) => ({
+                      ...prev,
+                      image: event.target.value,
+                    }))
                   }
                 >
                   {IMAGE_OPTIONS.map((opt) => (
@@ -911,7 +1078,10 @@ function News() {
                   value={filters.region}
                   label="Region"
                   onChange={(event) =>
-                    setFilters((prev) => ({ ...prev, region: event.target.value }))
+                    setFilters((prev) => ({
+                      ...prev,
+                      region: event.target.value,
+                    }))
                   }
                 >
                   <MenuItem value="">All</MenuItem>
@@ -929,7 +1099,10 @@ function News() {
                   value={filters.section}
                   label="Section"
                   onChange={(event) =>
-                    setFilters((prev) => ({ ...prev, section: event.target.value }))
+                    setFilters((prev) => ({
+                      ...prev,
+                      section: event.target.value,
+                    }))
                   }
                 >
                   <MenuItem value="">All</MenuItem>
@@ -942,6 +1115,30 @@ function News() {
               </FormControl>
 
               <Box sx={{ flexGrow: 1 }} />
+              <Tooltip
+                title={
+                  pendingCount
+                    ? "Release every pending story now, ignoring their scheduled times"
+                    : "No pending stories to release"
+                }
+              >
+                <span>
+                  <Button
+                    variant="outlined"
+                    color="secondary"
+                    size="small"
+                    startIcon={<Play size={16} />}
+                    onClick={openReleaseAll}
+                    disabled={!pendingCount || releaseAllLoading}
+                  >
+                    {releaseAllLoading
+                      ? "Releasing..."
+                      : `Release All Pending${
+                          pendingCount ? ` (${pendingCount})` : ""
+                        }`}
+                  </Button>
+                </span>
+              </Tooltip>
               <Button
                 variant="outlined"
                 size="small"
@@ -1066,12 +1263,19 @@ function News() {
                 CruisNews Prompt
               </Typography>
               <Typography variant="body2" color="text.secondary" gutterBottom>
-                This prompt controls story generation. Revert restores the last saved prompt.
+                This prompt controls story generation. Revert restores the last
+                saved prompt.
               </Typography>
 
               <Divider sx={{ my: 2 }} />
 
-              <Box display="flex" flexWrap="wrap" gap={2} mb={2} alignItems="center">
+              <Box
+                display="flex"
+                flexWrap="wrap"
+                gap={2}
+                mb={2}
+                alignItems="center"
+              >
                 <FormControl size="small" sx={{ minWidth: 220 }}>
                   <InputLabel>Story Provider</InputLabel>
                   <Select
@@ -1079,7 +1283,7 @@ function News() {
                     label="Story Provider"
                     onChange={(event) => setProvider(event.target.value)}
                   >
-                    <MenuItem value="claude">Claude (Sonnet 4.6)</MenuItem>
+                    <MenuItem value="claude">Claude (Sonnet 5)</MenuItem>
                     <MenuItem value="openai">OpenAI (Responses API)</MenuItem>
                   </Select>
                 </FormControl>
@@ -1097,7 +1301,13 @@ function News() {
                 placeholder={promptLoading ? "Loading prompt..." : ""}
                 disabled={promptLoading}
               />
-              <Box display="flex" flexWrap="wrap" gap={2} mt={2} alignItems="center">
+              <Box
+                display="flex"
+                flexWrap="wrap"
+                gap={2}
+                mt={2}
+                alignItems="center"
+              >
                 <Button
                   variant="contained"
                   onClick={handleSavePrompt}
@@ -1126,7 +1336,8 @@ function News() {
                 Image Prompt Config
               </Typography>
               <Typography variant="body2" color="text.secondary" gutterBottom>
-                Configure image boilerplate and JSON style rules used for gpt-image-1.5 prompts.
+                Configure image boilerplate and JSON style rules used for
+                gpt-image-1.5 prompts.
               </Typography>
               <Divider sx={{ my: 2 }} />
 
@@ -1138,7 +1349,9 @@ function News() {
                   label="Image Boilerplate"
                   value={imageBoilerplate}
                   onChange={(event) => setImageBoilerplate(event.target.value)}
-                  placeholder={promptLoading ? "Loading image boilerplate..." : ""}
+                  placeholder={
+                    promptLoading ? "Loading image boilerplate..." : ""
+                  }
                   disabled={promptLoading}
                 />
                 <TextField
@@ -1148,13 +1361,24 @@ function News() {
                   label="Image Prompt Config (JSON)"
                   value={imagePromptConfig}
                   onChange={(event) => setImagePromptConfig(event.target.value)}
-                  placeholder={promptLoading ? "Loading image prompt config..." : ""}
+                  placeholder={
+                    promptLoading ? "Loading image prompt config..." : ""
+                  }
                   disabled={promptLoading}
                   inputProps={{
-                    style: {fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"},
+                    style: {
+                      fontFamily:
+                        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                    },
                   }}
                 />
-                <Box display="flex" flexWrap="wrap" gap={2} mt={1} alignItems="center">
+                <Box
+                  display="flex"
+                  flexWrap="wrap"
+                  gap={2}
+                  mt={1}
+                  alignItems="center"
+                >
                   <Button
                     variant="contained"
                     onClick={handleSavePrompt}

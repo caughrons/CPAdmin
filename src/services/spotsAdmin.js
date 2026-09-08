@@ -54,8 +54,10 @@ export async function moderateComment(commentId, action) {
   return callFunction('moderateComment', { commentId, action });
 }
 
-export async function importSpots(spots) {
-  return callFunction('importSpots', { spots }, 540000); // matches server timeoutSeconds: 540
+export async function importSpots(spots, reseed = false) {
+  // reseed: bump the written regions' dataset versions so mobile clients do a
+  // full re-download. Use only when replacing a region's spots wholesale.
+  return callFunction('importSpots', { spots, reseed }, 540000); // matches server timeoutSeconds: 540
 }
 
 export async function getSpotDetail(spotId) {
@@ -70,8 +72,18 @@ export async function purgeDeletedSpots(dryRun) {
   return callFunction('purgeDeletedSpots', { dryRun }, 540000); // matches server timeoutSeconds: 540
 }
 
-export async function bulkUpdateRegion(region) {
-  return callFunction('bulkUpdateRegion', { region });
+export async function softDeleteSpotsInBbox(
+  latMin, latMax, lngMin, lngMax, dryRun = true, excludeRegions = [],
+) {
+  return callFunction(
+    'softDeleteSpotsInBbox',
+    { latMin, latMax, lngMin, lngMax, dryRun, excludeRegions },
+    540000,
+  );
+}
+
+export async function reDeriveSpotRegions(dryRun = true) {
+  return callFunction('reDeriveSpotRegions', { dryRun }, 540000);
 }
 
 export async function generateSnapshotForSpot(latitude, longitude) {

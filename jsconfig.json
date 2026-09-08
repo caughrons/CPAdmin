@@ -2,28 +2,27 @@
   "compilerOptions": {
     "skipLibCheck": true,
     "checkJs": false,
-    "baseUrl": "src/",
     "types": [],
     "paths": {
       // Folders
-      "@/components/*": ["components/*"],
-      "@/contexts/*": ["contexts/*"],
-      "@/hooks/*": ["hooks/*"],
-      "@/layouts/*": ["layouts/*"],
-      "@/mocks/*": ["mocks/*"],
-      "@/pages/*": ["pages/*"],
-      "@/redux/*": ["redux/*"],
-      "@/theme/*": ["theme/*"],
-      "@/services/*": ["services/*"],
-      "@/utils/*": ["utils/*"],
-      "@/vendor/*": ["vendor/*"],
+      "@/components/*": ["./src/components/*"],
+      "@/contexts/*": ["./src/contexts/*"],
+      "@/hooks/*": ["./src/hooks/*"],
+      "@/layouts/*": ["./src/layouts/*"],
+      "@/mocks/*": ["./src/mocks/*"],
+      "@/pages/*": ["./src/pages/*"],
+      "@/redux/*": ["./src/redux/*"],
+      "@/theme/*": ["./src/theme/*"],
+      "@/services/*": ["./src/services/*"],
+      "@/utils/*": ["./src/utils/*"],
+      "@/vendor/*": ["./src/vendor/*"],
 
       // Files
-      "@/constants": ["constants"],
-      "@/config": ["config"],
-      "@/i18n": ["i18n"],
-      "@/mocks": ["mocks/index"],
-      "@/theme": ["theme/index"],
+      "@/constants": ["./src/constants"],
+      "@/config": ["./src/config"],
+      "@/i18n": ["./src/i18n"],
+      "@/mocks": ["./src/mocks/index"],
+      "@/theme": ["./src/theme/index"]
     }
   },
   "exclude": ["node_modules", "dist", "build"]

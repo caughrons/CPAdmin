@@ -11,9 +11,11 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Checkbox,
   Divider,
   Drawer,
   FormControl,
+  FormControlLabel,
   IconButton,
   InputLabel,
   LinearProgress,
@@ -55,7 +57,8 @@ import {
   getSpotDetail,
   deduplicateSpots,
   purgeDeletedSpots,
-  bulkUpdateRegion,
+  softDeleteSpotsInBbox,
+  reDeriveSpotRegions,
   bulkGenerateSnapshots,
   processSnapshotBatch,
   analyzeR2Storage,
@@ -66,11 +69,13 @@ import {
 
 const SPOT_TYPES = ["Bar", "Restaurant", "Snorkeling", "Dive", "Marina", "Hike", "Groceries", "Beach", "Boat Access"];
 
+// Must match VALID_REGIONS in functions/src/spotsAdmin.ts and the mobile app's
+// CruisingRegions.canonicalRegions.
 const VALID_REGIONS = [
   "Caribbean",
-  "Mediterranean", 
+  "Mediterranean",
   "Pacific",
-  "US East",
+  "US East Coast",
   "US Gulf",
   "US West",
   "Southern Ocean",
@@ -285,14 +290,17 @@ function Spots() {
   const [csvRowErrors, setCsvRowErrors] = useState({}); // { [_index]: string[] }
   const [skippedRows, setSkippedRows] = useState({}); // { [_index]: true } — invalid rows explicitly skipped by the admin
   const [csvFilter, setCsvFilter] = useState("all"); // "all" | "valid" | "invalid" | "skipped"
-  const [importRegion, setImportRegion] = useState("");
+  const [importRegion, setImportRegion] = useState(""); // "" = auto-derive per spot from coordinates
   const [regionMismatchDialogOpen, setRegionMismatchDialogOpen] = useState(false);
   const [regionMismatches, setRegionMismatches] = useState([]);
   const [expandedRawIndex, setExpandedRawIndex] = useState(null);
-  
-  // Bulk region update state
-  const [regionDialogOpen, setRegionDialogOpen] = useState(false);
-  const [selectedRegion, setSelectedRegion] = useState("");
+  // Reseed mode: clear an area, import the new set, purge, bump versions — one flow.
+  const [reseedMode, setReseedMode] = useState(false);
+  const [reseedBbox, setReseedBbox] = useState({ latMin: "", latMax: "", lngMin: "", lngMax: "" });
+  const [reseedPreserve, setReseedPreserve] = useState(["Caribbean"]);
+  const [reseedClearPreview, setReseedClearPreview] = useState(null); // { matched, byRegion }
+  const [reseedManifest, setReseedManifest] = useState(null);
+  const [reseedRunLog, setReseedRunLog] = useState([]); // progress lines shown on step 4
   
   // Deduplication state
   const [dedupDialogOpen, setDedupDialogOpen] = useState(false);
@@ -303,6 +311,20 @@ function Spots() {
   const [purgeDialogOpen, setPurgeDialogOpen] = useState(false);
   const [purgeResult, setPurgeResult] = useState(null);
   const [purgeLoading, setPurgeLoading] = useState(false);
+
+  // Bounding-box soft-delete state (coordinate-based; ignores region tag)
+  const [bboxDialogOpen, setBboxDialogOpen] = useState(false);
+  const [bboxInputs, setBboxInputs] = useState({
+    latMin: "24.3",
+    latMax: "45.3",
+    lngMin: "-97.6",
+    lngMax: "-66.8",
+  });
+  // Regions kept even if inside the box — the US-East box reaches the Keys
+  // latitude and would otherwise sweep up correctly-tagged Bahamas spots.
+  const [bboxExcludeRegions, setBboxExcludeRegions] = useState(["Caribbean"]);
+  const [bboxResult, setBboxResult] = useState(null);
+  const [bboxLoading, setBboxLoading] = useState(false);
   
   // Edit dialog state
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -567,25 +589,60 @@ function Spots() {
     }
   };
   
-  const handleBulkUpdateRegion = async () => {
-    if (!selectedRegion) {
-      alert('Please select a region');
+  const handleBboxDelete = async (dryRun = true) => {
+    const latMin = parseFloat(bboxInputs.latMin);
+    const latMax = parseFloat(bboxInputs.latMax);
+    const lngMin = parseFloat(bboxInputs.lngMin);
+    const lngMax = parseFloat(bboxInputs.lngMax);
+    if ([latMin, latMax, lngMin, lngMax].some((n) => Number.isNaN(n))) {
+      alert('All four bounds must be numbers.');
       return;
     }
-    
-    if (!confirm(`Set ALL spots to region "${selectedRegion}"? This will update ${spots.length}+ spots.`)) return;
-    
+    if (latMin >= latMax || lngMin >= lngMax) {
+      alert('Need latMin < latMax and lngMin < lngMax.');
+      return;
+    }
+    setBboxLoading(true);
     try {
-      const result = await bulkUpdateRegion(selectedRegion);
-      alert(`Success! Updated ${result.updated} spots to region "${result.region}".`);
-      setRegionDialogOpen(false);
-      setSelectedRegion("");
-      await loadSpots();
+      const result = await softDeleteSpotsInBbox(
+        latMin, latMax, lngMin, lngMax, dryRun, bboxExcludeRegions,
+      );
+      setBboxResult(result);
+      if (!dryRun) {
+        alert(`Success! ${result.message}`);
+        setBboxDialogOpen(false);
+        setBboxResult(null);
+        await loadSpots();
+      }
     } catch (e) {
-      alert(`Bulk update failed: ${e.message}`);
+      alert(`Bounding-box delete failed: ${e.message}`);
+    } finally {
+      setBboxLoading(false);
     }
   };
-  
+
+  const handleReDeriveRegions = async () => {
+    try {
+      const preview = await reDeriveSpotRegions(true);
+      const lines = Object.entries(preview.transitions || {})
+        .map(([k, n]) => `  ${k}: ${n}`)
+        .join('\n');
+      if (!preview.wouldChange) {
+        alert('All spot regions already match their coordinates. Nothing to do.');
+        return;
+      }
+      if (!confirm(
+        `Re-tag ${preview.wouldChange} spot(s) by coordinates?\n\n${lines}\n\n` +
+        `Affected regions' dataset versions will be bumped (clients re-sync).`
+      )) return;
+      const result = await reDeriveSpotRegions(false);
+      alert(`Done. ${result.message}\nBumped: ${(result.datasetVersionsBumped || []).join(', ') || 'none'}`);
+      await loadSpots();
+    } catch (e) {
+      alert(`Re-derive failed: ${e.message}`);
+    }
+  };
+
   const handleBulkSnapshotGeneration = async () => {
     try {
       setSnapshotProgress({ 
@@ -804,35 +861,79 @@ function Spots() {
   
   // ── Handle CSV import ──────────────────────────────────────────────────────
   
-  const handleFileUpload = (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
+  const _readFile = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        let text = e.target.result;
+        // Strip a UTF-8 BOM — otherwise it's prepended to the first header name.
+        if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+        resolve(text);
+      };
+      reader.onerror = () => reject(reader.error);
+      // Explicit UTF-8 so accented names (e.g. "São Paulo") decode correctly.
+      reader.readAsText(file, "UTF-8");
+    });
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      // Strip a UTF-8 BOM if present — otherwise it gets prepended to the first
-      // header name (e.g. "﻿name") and silently breaks matching against it.
-      let text = e.target.result;
-      if (text.charCodeAt(0) === 0xfeff) {
-        text = text.slice(1);
+  const handleFileUpload = async (event) => {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
+
+    // Reset flow state.
+    setImportRegion("");
+    setReseedMode(false);
+    setReseedBbox({ latMin: "", latMax: "", lngMin: "", lngMax: "" });
+    setReseedPreserve(["Caribbean"]);
+    setReseedClearPreview(null);
+    setReseedManifest(null);
+    setRegionMismatches([]);
+    setExpandedRawIndex(null);
+
+    const csvFiles = files.filter((f) => f.name.toLowerCase().endsWith(".csv"));
+    const manifestFile = files.find((f) => f.name.toLowerCase().endsWith(".json"));
+
+    // A manifest pre-fills the reseed bounding box.
+    if (manifestFile) {
+      try {
+        const m = JSON.parse(await _readFile(manifestFile));
+        setReseedManifest(m);
+        if (m.bbox) {
+          setReseedMode(true);
+          setReseedBbox({
+            latMin: String(m.bbox.latMin), latMax: String(m.bbox.latMax),
+            lngMin: String(m.bbox.lngMin), lngMax: String(m.bbox.lngMax),
+          });
+        }
+      } catch {
+        alert("Could not parse the manifest JSON — continuing without it.");
       }
-      const parsed = parseCSV(text);
-      const errorsMap = {};
-      parsed.rows.forEach(row => {
-        errorsMap[row._index] = validateSpotRow(row);
-      });
-      setCsvData(parsed);
-      setCsvRowErrors(errorsMap);
-      setSkippedRows({});
-      setCsvFilter("all");
-      setImportRegion("");
-      setRegionMismatches([]);
-      setExpandedRawIndex(null);
-      setCsvFile(file);
-      setCsvStep(2);
-    };
-    // Explicit UTF-8 so accented/non-ASCII names (e.g. "São Paulo", "Köln") decode correctly.
-    reader.readAsText(file, "UTF-8");
+    }
+
+    if (!csvFiles.length) {
+      alert("No .csv file selected.");
+      return;
+    }
+
+    // Parse + concatenate every CSV (chunks or a single file), re-indexing rows.
+    const merged = { headers: [], rows: [] };
+    for (const f of csvFiles) {
+      const parsed = parseCSV(await _readFile(f));
+      if (!merged.headers.length) merged.headers = parsed.headers;
+      for (const row of parsed.rows) {
+        merged.rows.push({ ...row, _index: merged.rows.length });
+      }
+    }
+
+    const errorsMap = {};
+    merged.rows.forEach((row) => {
+      errorsMap[row._index] = validateSpotRow(row);
+    });
+    setCsvData(merged);
+    setCsvRowErrors(errorsMap);
+    setSkippedRows({});
+    setCsvFilter("all");
+    setCsvFile(csvFiles.length === 1 ? csvFiles[0] : { name: `${csvFiles.length} files` });
+    setCsvStep(2);
   };
 
   // Compares each row's coordinates against the chosen import region and warns
@@ -885,7 +986,26 @@ function Spots() {
     }));
   };
 
-  const handleImport = async () => {
+  const IMPORT_CHUNK = 9000; // stays under importSpots' 540s timeout
+
+  const handleReseedClearPreview = async () => {
+    const b = {
+      latMin: parseFloat(reseedBbox.latMin), latMax: parseFloat(reseedBbox.latMax),
+      lngMin: parseFloat(reseedBbox.lngMin), lngMax: parseFloat(reseedBbox.lngMax),
+    };
+    if (Object.values(b).some(Number.isNaN)) {
+      alert("Fill in all four bounding-box values first.");
+      return;
+    }
+    try {
+      const r = await softDeleteSpotsInBbox(b.latMin, b.latMax, b.lngMin, b.lngMax, true, reseedPreserve);
+      setReseedClearPreview(r);
+    } catch (e) {
+      alert(`Preview failed: ${e.message}`);
+    }
+  };
+
+  const handleReseedOrImport = async () => {
     const validRows = csvData.rows.filter(row => (csvRowErrors[row._index] || []).length === 0);
     const spots = validRows.map(row => ({
       name: row.name,
@@ -895,22 +1015,66 @@ function Spots() {
       description: row.description || undefined,
       region: importRegion || row.region || undefined,
     }));
-    
+
+    const b = reseedMode ? {
+      latMin: parseFloat(reseedBbox.latMin), latMax: parseFloat(reseedBbox.latMax),
+      lngMin: parseFloat(reseedBbox.lngMin), lngMax: parseFloat(reseedBbox.lngMax),
+    } : null;
+    if (reseedMode && Object.values(b).some(Number.isNaN)) {
+      alert("Reseed needs all four bounding-box values.");
+      return;
+    }
+
     setCsvStep(4);
     setImportProgress(0);
-    
+    setImportResult(null);
+    setReseedRunLog([]);
+    const log = (line) => setReseedRunLog(prev => [...prev, line]);
+
+    const totals = { deleted: 0, imported: 0, skipped: 0, purged: 0, bumped: new Set(), errors: [] };
+
     try {
-      const result = await importSpots(spots);
-      console.log('Import completed:', result);
-      if (result.skippedDetails && result.skippedDetails.length > 0) {
-        console.log('Skipped spots details:');
-        console.table(result.skippedDetails);
+      // 1. Clear the target area (reseed only).
+      if (reseedMode) {
+        log(`Clearing spots in the box (preserving: ${reseedPreserve.join(", ") || "none"})…`);
+        const del = await softDeleteSpotsInBbox(b.latMin, b.latMax, b.lngMin, b.lngMax, false, reseedPreserve);
+        totals.deleted = del.softDeleted || 0;
+        (del.datasetVersionsBumped || []).forEach(r => totals.bumped.add(r));
+        log(`  soft-deleted ${totals.deleted}`);
       }
-      setImportResult(result);
+
+      // 2. Import in chunks (both modes — one big call risks the 540s timeout).
+      const chunks = [];
+      for (let i = 0; i < spots.length; i += IMPORT_CHUNK) chunks.push(spots.slice(i, i + IMPORT_CHUNK));
+      for (let i = 0; i < chunks.length; i++) {
+        log(`Importing chunk ${i + 1}/${chunks.length} (${chunks[i].length} rows)…`);
+        const res = await importSpots(chunks[i], reseedMode);
+        totals.imported += res.imported || 0;
+        totals.skipped += res.skipped || 0;
+        (res.datasetVersionsBumped || []).forEach(r => totals.bumped.add(r));
+        (res.errors || []).forEach(e => totals.errors.push(e));
+        setImportProgress(Math.round(((i + 1) / chunks.length) * 100));
+      }
+
+      // 3. Purge the tombstones (reseed only).
+      if (reseedMode) {
+        log("Purging deleted spots…");
+        const pg = await purgeDeletedSpots(false);
+        totals.purged = pg.purged || 0;
+        (pg.datasetVersionsBumped || []).forEach(r => totals.bumped.add(r));
+        log(`  purged ${totals.purged}`);
+      }
+
+      log("Done. New/updated spots will get map snapshots automatically.");
+      setImportResult({
+        reseed: reseedMode,
+        ...totals,
+        datasetVersionsBumped: [...totals.bumped],
+      });
       setImportProgress(100);
     } catch (e) {
-      alert(`Import failed: ${e.message}`);
-      setCsvStep(3);
+      log(`ERROR: ${e.message}`);
+      alert(`${reseedMode ? "Reseed" : "Import"} failed: ${e.message}`);
     }
   };
   
@@ -1126,22 +1290,24 @@ function Spots() {
       return (
         <Box sx={{ p: 4, textAlign: "center" }}>
           <Typography variant="h6" gutterBottom>
-            Upload CSV File
+            Import / Reseed Spots
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            Required columns: name, latitude, longitude, type
+            Required columns: name, latitude, longitude, type · Optional: description, region
             <br />
-            Optional: description, region
+            Select one CSV, several chunk CSVs, and/or a{" "}
+            <code>*_import_manifest.json</code> (pre-fills the reseed bounding box).
           </Typography>
           <Button
             variant="contained"
             component="label"
             startIcon={<Upload size={18} />}
           >
-            Choose File
+            Choose File(s)
             <input
               type="file"
-              accept=".csv"
+              accept=".csv,.json"
+              multiple
               hidden
               onChange={handleFileUpload}
             />
@@ -1179,11 +1345,25 @@ function Spots() {
                   checkRegionMismatch(region);
                 }}
               >
+                <MenuItem value="">
+                  <em>Auto — derive per spot from coordinates</em>
+                </MenuItem>
                 {VALID_REGIONS.map(r => (
                   <MenuItem key={r} value={r}>{r}</MenuItem>
                 ))}
               </Select>
             </FormControl>
+            <Tooltip title="Reseed = replace every spot inside a bounding box with this CSV. It soft-deletes the area, imports, purges, and bumps each affected region's dataset version so phones re-download. Leave OFF for a plain additive import.">
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={reseedMode}
+                    onChange={(e) => { setReseedMode(e.target.checked); setReseedClearPreview(null); }}
+                  />
+                }
+                label="Reseed (replace an area)"
+              />
+            </Tooltip>
             <ToggleButtonGroup
               size="small"
               exclusive
@@ -1200,23 +1380,72 @@ function Spots() {
             <Box sx={{ flexGrow: 1 }} />
             <Button
               variant="contained"
+              color={reseedMode ? "error" : "primary"}
               onClick={() => {
                 if (invalidRows.length > 0) {
                   const proceed = confirm(
-                    `${invalidRows.length} invalid row(s) will be skipped and not imported. Continue with the remaining ${validRows.length} valid row(s)?`
+                    `${invalidRows.length} invalid row(s) will be skipped. Continue with ${validRows.length} valid row(s)?`
                   );
                   if (!proceed) return;
                 }
-                handleImport();
+                if (reseedMode && !confirm(
+                  `Reseed: soft-delete every spot in the box${reseedPreserve.length ? ` (except ${reseedPreserve.join(", ")})` : ""}, ` +
+                  `import ${validRows.length} rows, then purge. Proceed?`
+                )) return;
+                handleReseedOrImport();
               }}
-              disabled={!importRegion || validRows.length === 0}
+              disabled={validRows.length === 0}
             >
-              Proceed to Import
+              {reseedMode ? "Reseed" : "Import"}
             </Button>
             <Button onClick={() => setCsvStep(1)}>Cancel</Button>
           </Stack>
+
+          {reseedMode && (
+            <Box sx={{ mb: 2, p: 2, border: 1, borderColor: "divider", borderRadius: 1 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                Area to clear{reseedManifest ? " (from manifest)" : ""}
+              </Typography>
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
+                {["latMin", "latMax", "lngMin", "lngMax"].map((k) => (
+                  <TextField
+                    key={k} label={k} size="small" sx={{ width: 120 }}
+                    value={reseedBbox[k]}
+                    onChange={(e) => { setReseedBbox((v) => ({ ...v, [k]: e.target.value })); setReseedClearPreview(null); }}
+                  />
+                ))}
+                <FormControl size="small" sx={{ minWidth: 200 }}>
+                  <InputLabel id="reseed-preserve">Preserve regions</InputLabel>
+                  <Select
+                    labelId="reseed-preserve" label="Preserve regions" multiple
+                    value={reseedPreserve}
+                    onChange={(e) => setReseedPreserve(
+                      typeof e.target.value === "string" ? e.target.value.split(",") : e.target.value
+                    )}
+                    renderValue={(s) => (s.length ? s.join(", ") : "none")}
+                  >
+                    {VALID_REGIONS.map((r) => <MenuItem key={r} value={r}>{r}</MenuItem>)}
+                  </Select>
+                </FormControl>
+                <Button size="small" onClick={handleReseedClearPreview}>Preview clear</Button>
+                {reseedClearPreview && (
+                  <Chip
+                    color="warning"
+                    label={
+                      `${reseedClearPreview.matched} to delete` +
+                      (reseedClearPreview.excludedByRegion ? ` · ${reseedClearPreview.excludedByRegion} kept` : "")
+                    }
+                  />
+                )}
+              </Stack>
+            </Box>
+          )}
+
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
-            The assigned region is applied to every imported spot, overriding any per-row "region" values in the CSV.
+            {importRegion
+              ? `Every spot is tagged "${importRegion}", overriding per-row "region" values.`
+              : "Auto: each spot's region is derived from its coordinates server-side (use when the CSV spans more than one region)."}
+            {" · "}Imported in chunks of {IMPORT_CHUNK.toLocaleString()}.
           </Typography>
 
           <Paper sx={{ height: 500, width: "100%" }}>
@@ -1363,22 +1592,33 @@ function Spots() {
     
     if (csvStep === 4) {
       return (
-        <Box sx={{ p: 4, textAlign: "center" }}>
-          <Typography variant="h6" gutterBottom>
-            Importing...
+        <Box sx={{ p: 4 }}>
+          <Typography variant="h6" gutterBottom align="center">
+            {importResult ? (importResult.reseed ? "Reseed complete" : "Import complete") : "Working…"}
           </Typography>
           <LinearProgress variant="determinate" value={importProgress} sx={{ my: 2 }} />
+
+          {reseedRunLog.length > 0 && (
+            <Paper variant="outlined" sx={{ p: 1.5, mb: 2, maxHeight: 220, overflow: "auto", fontFamily: "monospace", fontSize: 13 }}>
+              {reseedRunLog.map((l, i) => (
+                <div key={i} style={{ color: l.startsWith("ERROR") ? "#d32f2f" : undefined }}>{l}</div>
+              ))}
+            </Paper>
+          )}
+
           {importResult && (
-            <Stack spacing={1} sx={{ mt: 3 }}>
-              <Alert severity="success">
-                Imported: {importResult.imported}
-              </Alert>
-              <Alert severity="warning">
-                Skipped (duplicates): {importResult.skipped}
-              </Alert>
+            <Stack spacing={1}>
+              {importResult.reseed && (
+                <Alert severity="info">Soft-deleted {importResult.deleted} · Purged {importResult.purged}</Alert>
+              )}
+              <Alert severity="success">Imported / upserted: {importResult.imported}</Alert>
+              <Alert severity="warning">Skipped (already present): {importResult.skipped}</Alert>
               {importResult.errors.length > 0 && (
-                <Alert severity="error">
-                  Errors: {importResult.errors.length}
+                <Alert severity="error">Row errors: {importResult.errors.length}</Alert>
+              )}
+              {importResult.datasetVersionsBumped.length > 0 && (
+                <Alert severity="info">
+                  Dataset versions bumped: {importResult.datasetVersionsBumped.join(", ")} — phones with these regions get a "new spots" prompt.
                 </Alert>
               )}
               <Button
@@ -1390,9 +1630,13 @@ function Spots() {
                   setCsvRowErrors({});
                   setCsvFilter("all");
                   setImportRegion("");
+                  setReseedMode(false);
+                  setReseedClearPreview(null);
+                  setReseedRunLog([]);
                   setRegionMismatches([]);
                   setExpandedRawIndex(null);
                   setImportResult(null);
+                  loadSpots();
                   setTab(0);
                 }}
               >
@@ -1614,14 +1858,23 @@ function Spots() {
                   Delete Selected ({selectedRows.length})
                 </Button>
               )}
-              
+
+              <Button size="small" variant="contained" onClick={() => setTab(2)} sx={{ mr: 2 }}>
+                Import / Reseed
+              </Button>
+
+              <Divider orientation="vertical" flexItem sx={{ mr: 1.5 }} />
+              <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
+                Maintenance:
+              </Typography>
+
               <Button
                 size="small"
                 variant="outlined"
-                onClick={() => setRegionDialogOpen(true)}
+                onClick={handleReDeriveRegions}
                 sx={{ mr: 1 }}
               >
-                Bulk Set Region
+                Re-derive Regions
               </Button>
               
               <Button
@@ -1636,6 +1889,19 @@ function Spots() {
                 Deduplicate {selectedRows.length > 0 ? `Selected (${selectedRows.length})` : 'All'}
               </Button>
               
+              <Button
+                size="small"
+                variant="outlined"
+                color="error"
+                onClick={() => {
+                  setBboxResult(null);
+                  setBboxDialogOpen(true);
+                }}
+                sx={{ mr: 1 }}
+              >
+                Delete by Box
+              </Button>
+
               <Button
                 size="small"
                 variant="outlined"
@@ -2644,38 +2910,6 @@ function Spots() {
         </DialogActions>
       </Dialog>
 
-      {/* Bulk Region Update Dialog */}
-      <Dialog open={regionDialogOpen} onClose={() => setRegionDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Bulk Set Region for All Spots</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            This will update ALL spots in the database to the selected region.
-          </Typography>
-          <FormControl fullWidth sx={{ mt: 2 }}>
-            <InputLabel>Region</InputLabel>
-            <Select
-              value={selectedRegion}
-              label="Region"
-              onChange={(e) => setSelectedRegion(e.target.value)}
-            >
-              {VALID_REGIONS.map(region => (
-                <MenuItem key={region} value={region}>{region}</MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setRegionDialogOpen(false)}>Cancel</Button>
-          <Button
-            variant="contained"
-            onClick={handleBulkUpdateRegion}
-            disabled={!selectedRegion}
-          >
-            Update All Spots
-          </Button>
-        </DialogActions>
-      </Dialog>
-      
       {/* Bulk Delete Confirmation Dialog */}
       <Dialog open={bulkDeleteDialogOpen} onClose={() => setBulkDeleteDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Confirm Bulk Delete</DialogTitle>
@@ -2782,6 +3016,101 @@ function Spots() {
         </DialogActions>
       </Dialog>
       
+      {/* Delete by Bounding Box Dialog */}
+      <Dialog open={bboxDialogOpen} onClose={() => setBboxDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Soft-Delete Spots by Bounding Box</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Soft-deletes every spot inside the lat/lng box regardless of its region
+            tag, then bumps the affected regions' dataset versions. Use this to
+            clear a region for a reseed when region-filtered delete leaves spots
+            behind (mis-tagged / blank region). Run <strong>Preview</strong> first;
+            follow with <strong>Purge Deleted</strong> to remove permanently.
+            The default box is the US East + Gulf coast.
+          </Typography>
+          <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
+            <TextField
+              label="lat min" size="small" value={bboxInputs.latMin}
+              onChange={(e) => setBboxInputs((v) => ({ ...v, latMin: e.target.value }))}
+            />
+            <TextField
+              label="lat max" size="small" value={bboxInputs.latMax}
+              onChange={(e) => setBboxInputs((v) => ({ ...v, latMax: e.target.value }))}
+            />
+          </Stack>
+          <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
+            <TextField
+              label="lng min" size="small" value={bboxInputs.lngMin}
+              onChange={(e) => setBboxInputs((v) => ({ ...v, lngMin: e.target.value }))}
+            />
+            <TextField
+              label="lng max" size="small" value={bboxInputs.lngMax}
+              onChange={(e) => setBboxInputs((v) => ({ ...v, lngMax: e.target.value }))}
+            />
+          </Stack>
+          <FormControl size="small" fullWidth sx={{ mb: 2 }}>
+            <InputLabel id="bbox-preserve-label">Preserve regions (not deleted)</InputLabel>
+            <Select
+              labelId="bbox-preserve-label"
+              label="Preserve regions (not deleted)"
+              multiple
+              value={bboxExcludeRegions}
+              onChange={(e) =>
+                setBboxExcludeRegions(
+                  typeof e.target.value === "string"
+                    ? e.target.value.split(",")
+                    : e.target.value,
+                )
+              }
+              renderValue={(sel) => (sel.length ? sel.join(", ") : "none")}
+            >
+              {VALID_REGIONS.map((r) => (
+                <MenuItem key={r} value={r}>{r}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          {bboxLoading && (
+            <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
+              <CircularProgress />
+            </Box>
+          )}
+          {!bboxLoading && bboxResult && (
+            <Alert
+              severity={bboxResult.dryRun ? "info" : "warning"}
+              sx={{ mb: 1 }}
+            >
+              {bboxResult.message}
+              {bboxResult.byRegion && Object.keys(bboxResult.byRegion).length > 0 && (
+                <Box component="span" sx={{ display: "block", mt: 0.5 }}>
+                  {Object.entries(bboxResult.byRegion)
+                    .map(([r, n]) => `${r}: ${n}`)
+                    .join("  •  ")}
+                </Box>
+              )}
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBboxDialogOpen(false)}>Close</Button>
+          <Button
+            onClick={() => handleBboxDelete(true)}
+            disabled={bboxLoading}
+          >
+            Preview
+          </Button>
+          {bboxResult && bboxResult.dryRun && bboxResult.matched > 0 && (
+            <Button
+              variant="contained"
+              color="error"
+              onClick={() => handleBboxDelete(false)}
+              disabled={bboxLoading}
+            >
+              Soft-Delete {bboxResult.matched}
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
+
       {/* Purge Deleted Dialog */}
       <Dialog open={purgeDialogOpen} onClose={() => setPurgeDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>Purge Deleted Spots</DialogTitle>

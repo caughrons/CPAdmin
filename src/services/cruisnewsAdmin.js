@@ -205,7 +205,7 @@ export async function saveCruisnewsPrompt(
 export async function runCruisnewsPrompt() {
   // Two-phase generation (web-search research + write) can run ~12–15 min.
   const callable = functions.httpsCallable("generateStoryManual", {
-    timeout: 900000,
+    timeout: 1800000,
   });
   const result = await callable();
   return result.data;

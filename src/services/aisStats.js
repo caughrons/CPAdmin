@@ -1,13 +1,11 @@
 import firebase from "firebase/app";
-import "firebase/firestore";
 import "firebase/database";
-import { firebaseConfig } from "@/config";
+import { firebaseConfig, AIS_INGESTION_URL } from "@/config";
 
 if (!firebase.apps.length) {
   firebase.initializeApp(firebaseConfig);
 }
 
-const db = firebase.firestore();
 const rtdb = firebase.database();
 
 async function safeGet(label, fn) {
@@ -20,22 +18,54 @@ async function safeGet(label, fn) {
 }
 
 /**
- * Fetch AIS/GPS vessel stats and positions for the admin AIS page.
+ * Fetch AIS + GPS vessel stats for one AIS coverage box, for the admin AIS
+ * page. Reads live vessels straight from the ingestion service's in-memory
+ * store (GET /vessels) — Firestore is no longer in this path — and overlays
+ * GPS broadcasters from RTDB user_locations.
  *
+ * @param {{north:number,south:number,east:number,west:number}} box
  * Returns:
- *   totalTargets   — total unique vessels (AIS + GPS combined, deduplicated)
- *   aisOnly        — vessels with AIS data but no linked GPS user
- *   gpsOnly        — GPS users with no AIS match
- *   both           — vessels with both AIS and GPS (linkedUserId set)
- *   lastAisUpdate  — Date of the most recent lastUpdated in ais_vessels
- *   vessels        — array of { lat, lng, source: 'ais'|'gps'|'merged' }
+ *   totalTargets   — unique vessels in the box (AIS + GPS, deduped)
+ *   aisOnly        — AIS vessels with no linked CruisaPalooza account
+ *   gpsOnly        — GPS broadcasters with no AIS match
+ *   both           — vessels with both (linkedUserId set)
+ *   lastAisUpdate  — Date of the most recent lastUpdated among AIS vessels
+ *   truncated      — true if the box holds more vessels than were returned
+ *   vessels        — [{ lat, lng, source: 'ais'|'gps'|'merged' }]
  */
-export async function fetchAisStats() {
-  // Fetch all ais_vessels (no bounds filter — global view for admin)
-  const [aisSnap, locSnap] = await Promise.all([
-    safeGet("ais_vessels", () =>
-      db.collection("ais_vessels").get()
-    ),
+export async function fetchRegionAisStats(box) {
+  if (!box) {
+    return {
+      totalTargets: 0,
+      aisOnly: 0,
+      gpsOnly: 0,
+      both: 0,
+      lastAisUpdate: null,
+      truncated: false,
+      vessels: [],
+    };
+  }
+
+  const centerLat = (box.north + box.south) / 2;
+  const centerLng = (box.east + box.west) / 2;
+  const params = new URLSearchParams({
+    north: String(box.north),
+    south: String(box.south),
+    east: String(box.east),
+    west: String(box.west),
+    lat: String(centerLat),
+    lng: String(centerLng),
+    limit: "2500",
+  });
+
+  const [aisResp, locSnap] = await Promise.all([
+    safeGet("GET /vessels", async () => {
+      const r = await fetch(
+        `${AIS_INGESTION_URL}/vessels?${params.toString()}`
+      );
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }),
     safeGet("user_locations", () => rtdb.ref("user_locations").get()),
   ]);
 
@@ -43,63 +73,60 @@ export async function fetchAisStats() {
   let aisOnly = 0;
   let both = 0;
   let lastAisUpdate = null;
-
-  // Track MMSI/linkedUserId of AIS vessels to detect GPS-only users
   const linkedUserIds = new Set();
 
-  if (aisSnap !== null) {
-    for (const doc of aisSnap.docs) {
-      const d = doc.data();
-      const lat = d.latitude;
-      const lng = d.longitude;
-      if (lat == null || lng == null) continue;
+  const aisVessels =
+    aisResp && Array.isArray(aisResp.vessels) ? aisResp.vessels : [];
 
-      // Parse lastUpdated
-      let updatedAt = null;
-      if (d.lastUpdated) {
-        if (typeof d.lastUpdated.toDate === "function") {
-          updatedAt = d.lastUpdated.toDate();
-        } else if (typeof d.lastUpdated === "number") {
-          updatedAt = new Date(d.lastUpdated);
-        } else if (typeof d.lastUpdated === "string") {
-          updatedAt = new Date(d.lastUpdated);
-        }
-      }
-      if (updatedAt && (!lastAisUpdate || updatedAt > lastAisUpdate)) {
-        lastAisUpdate = updatedAt;
-      }
+  for (const v of aisVessels) {
+    const lat = v.latitude;
+    const lng = v.longitude;
+    if (lat == null || lng == null) continue;
 
-      if (d.linkedUserId) {
-        // Merged: has both AIS and GPS
-        linkedUserIds.add(d.linkedUserId);
-        both++;
-        vessels.push({ lat, lng, source: "merged" });
-      } else {
-        // AIS only
-        aisOnly++;
-        vessels.push({ lat, lng, source: "ais" });
-      }
+    if (typeof v.lastUpdated === "number") {
+      const t = new Date(v.lastUpdated);
+      if (!lastAisUpdate || t > lastAisUpdate) lastAisUpdate = t;
+    }
+
+    if (v.linkedUserId) {
+      linkedUserIds.add(v.linkedUserId);
+      both++;
+      vessels.push({ lat, lng, source: "merged" });
+    } else {
+      aisOnly++;
+      vessels.push({ lat, lng, source: "ais" });
     }
   }
 
-  // GPS-only: users in user_locations that are NOT in linkedUserIds
+  // GPS-only: user_locations inside the box, not already matched via AIS.
   let gpsOnly = 0;
-  if (locSnap !== null && locSnap.exists()) {
+  const inBox = (lat, lng) =>
+    lat >= box.south && lat <= box.north && lng >= box.west && lng <= box.east;
+
+  if (locSnap && locSnap.exists()) {
     const locs = locSnap.val();
     for (const [uid, loc] of Object.entries(locs)) {
       if (!loc || loc.privacyEnabled === true) continue;
-      if (linkedUserIds.has(uid)) continue; // already counted as merged
-      const lat = loc.latitude;
-      const lng = loc.longitude;
+      if (linkedUserIds.has(uid)) continue;
+      // Mirror the client's dual-read: prefer the arbitrated `selected` point.
+      const sel =
+        loc.selected && typeof loc.selected === "object" ? loc.selected : loc;
+      const lat = sel.latitude;
+      const lng = sel.longitude;
       if (lat == null || lng == null) continue;
+      if (!inBox(lat, lng)) continue;
       gpsOnly++;
       vessels.push({ lat, lng, source: "gps" });
     }
   }
 
-  const totalTargets = aisOnly + gpsOnly + both;
-
-  console.log("[aisStats]", { totalTargets, aisOnly, gpsOnly, both, lastAisUpdate, vesselDots: vessels.length, aisSnapDocs: aisSnap?.docs?.length ?? "null" });
-
-  return { totalTargets, aisOnly, gpsOnly, both, lastAisUpdate, vessels };
+  return {
+    totalTargets: aisOnly + gpsOnly + both,
+    aisOnly,
+    gpsOnly,
+    both,
+    lastAisUpdate,
+    truncated: Boolean(aisResp && aisResp.truncated),
+    vessels,
+  };
 }

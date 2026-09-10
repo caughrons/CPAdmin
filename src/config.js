@@ -31,7 +31,15 @@ export const REGION_PACKAGES = {
         peakSeason: "June-Oct",
         offSeason: "Nov-May",
         optimalMonths: ["June", "July", "August", "September", "October"],
-        cautionMonths: ["November", "December", "January", "February", "March", "April", "May"],
+        cautionMonths: [
+          "November",
+          "December",
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+        ],
       },
       estimatedSizeMB: 180,
       includedAreas: ["Maine", "New Hampshire", "Massachusetts", "Cape Cod"],
@@ -44,11 +52,25 @@ export const REGION_PACKAGES = {
       seasonalInfo: {
         peakSeason: "May-Nov",
         offSeason: "Dec-Apr",
-        optimalMonths: ["May", "June", "July", "August", "September", "October", "November"],
+        optimalMonths: [
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+        ],
         cautionMonths: ["December", "January", "February", "March", "April"],
       },
       estimatedSizeMB: 200,
-      includedAreas: ["Long Island", "New Jersey", "Delaware", "Chesapeake Bay", "Virginia"],
+      includedAreas: [
+        "Long Island",
+        "New Jersey",
+        "Delaware",
+        "Chesapeake Bay",
+        "Virginia",
+      ],
     },
     {
       id: "us_east_southeast",
@@ -59,10 +81,24 @@ export const REGION_PACKAGES = {
         peakSeason: "Dec-Apr",
         offSeason: "May-Nov",
         optimalMonths: ["December", "January", "February", "March", "April"],
-        cautionMonths: ["May", "June", "July", "August", "September", "October", "November"],
+        cautionMonths: [
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+        ],
       },
       estimatedSizeMB: 220,
-      includedAreas: ["Georgia", "Florida", "Jacksonville", "Miami", "Key West"],
+      includedAreas: [
+        "Georgia",
+        "Florida",
+        "Jacksonville",
+        "Miami",
+        "Key West",
+      ],
     },
     {
       id: "us_east_icw",
@@ -72,7 +108,17 @@ export const REGION_PACKAGES = {
       seasonalInfo: {
         peakSeason: "Oct-May southbound, Apr-Jun northbound",
         offSeason: "Jul-Sep",
-        optimalMonths: ["October", "November", "December", "January", "February", "March", "April", "May", "June"],
+        optimalMonths: [
+          "October",
+          "November",
+          "December",
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+          "June",
+        ],
         cautionMonths: ["July", "August", "September"],
       },
       estimatedSizeMB: 350,
@@ -89,7 +135,15 @@ export const REGION_PACKAGES = {
         peakSeason: "May-Sep",
         offSeason: "Oct-Apr",
         optimalMonths: ["May", "June", "July", "August", "September"],
-        cautionMonths: ["October", "November", "December", "January", "February", "March", "April"],
+        cautionMonths: [
+          "October",
+          "November",
+          "December",
+          "January",
+          "February",
+          "March",
+          "April",
+        ],
       },
       estimatedSizeMB: 240,
       includedAreas: ["Washington", "Oregon", "Northern California"],
@@ -102,11 +156,30 @@ export const REGION_PACKAGES = {
       seasonalInfo: {
         peakSeason: "Year-round",
         offSeason: "None significant",
-        optimalMonths: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
+        optimalMonths: [
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+        ],
         cautionMonths: [],
       },
       estimatedSizeMB: 180,
-      includedAreas: ["San Francisco", "Monterey", "San Luis Obispo", "Santa Barbara", "Los Angeles"],
+      includedAreas: [
+        "San Francisco",
+        "Monterey",
+        "San Luis Obispo",
+        "Santa Barbara",
+        "Los Angeles",
+      ],
     },
     {
       id: "us_west_southern_california",
@@ -116,14 +189,27 @@ export const REGION_PACKAGES = {
       seasonalInfo: {
         peakSeason: "Year-round, peak summer",
         offSeason: "None significant",
-        optimalMonths: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
+        optimalMonths: [
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+        ],
         cautionMonths: [],
       },
       estimatedSizeMB: 120,
       includedAreas: ["Los Angeles", "Orange County", "San Diego"],
     },
   ],
-  "Caribbean": [
+  Caribbean: [
     {
       id: "caribbean_leeward",
       name: "Leeward Islands Package",
@@ -133,11 +219,31 @@ export const REGION_PACKAGES = {
         peakSeason: "Dec-May",
         offSeason: "Jun-Nov",
         hurricaneSeason: "Jun-Nov",
-        optimalMonths: ["December", "January", "February", "March", "April", "May"],
-        cautionMonths: ["June", "July", "August", "September", "October", "November"],
+        optimalMonths: [
+          "December",
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+        ],
+        cautionMonths: [
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+        ],
       },
       estimatedSizeMB: 150,
-      includedAreas: ["Virgin Islands", "St. Martin", "St. Barts", "Antigua", "Barbuda"],
+      includedAreas: [
+        "Virgin Islands",
+        "St. Martin",
+        "St. Barts",
+        "Antigua",
+        "Barbuda",
+      ],
     },
     {
       id: "caribbean_windward",
@@ -148,8 +254,22 @@ export const REGION_PACKAGES = {
         peakSeason: "Dec-May",
         offSeason: "Jun-Nov",
         hurricaneSeason: "Jun-Nov",
-        optimalMonths: ["December", "January", "February", "March", "April", "May"],
-        cautionMonths: ["June", "July", "August", "September", "October", "November"],
+        optimalMonths: [
+          "December",
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+        ],
+        cautionMonths: [
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+        ],
       },
       estimatedSizeMB: 130,
       includedAreas: ["Martinique", "St. Lucia", "St. Vincent", "Grenada"],
@@ -164,7 +284,15 @@ export const REGION_PACKAGES = {
         offSeason: "May-Nov",
         hurricaneSeason: "Jun-Nov",
         optimalMonths: ["December", "January", "February", "March", "April"],
-        cautionMonths: ["May", "June", "July", "August", "September", "October", "November"],
+        cautionMonths: [
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+        ],
       },
       estimatedSizeMB: 280,
       includedAreas: ["Cuba", "Jamaica", "Hispaniola", "Puerto Rico"],
@@ -178,14 +306,28 @@ export const REGION_PACKAGES = {
         peakSeason: "Nov-Apr",
         offSeason: "May-Oct",
         hurricaneSeason: "Jun-Nov",
-        optimalMonths: ["November", "December", "January", "February", "March", "April"],
-        cautionMonths: ["May", "June", "July", "August", "September", "October"],
+        optimalMonths: [
+          "November",
+          "December",
+          "January",
+          "February",
+          "March",
+          "April",
+        ],
+        cautionMonths: [
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+        ],
       },
       estimatedSizeMB: 200,
       includedAreas: ["Belize", "Honduras", "Mexico Yucatan", "Cayman Islands"],
     },
   ],
-  "Mediterranean": [
+  Mediterranean: [
     {
       id: "med_western",
       name: "Western Med Package",
@@ -194,8 +336,22 @@ export const REGION_PACKAGES = {
       seasonalInfo: {
         peakSeason: "May-Oct",
         offSeason: "Nov-Apr",
-        optimalMonths: ["May", "June", "July", "August", "September", "October"],
-        cautionMonths: ["November", "December", "January", "February", "March", "April"],
+        optimalMonths: [
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+        ],
+        cautionMonths: [
+          "November",
+          "December",
+          "January",
+          "February",
+          "March",
+          "April",
+        ],
       },
       estimatedSizeMB: 320,
       includedAreas: ["Spain", "Balearic Islands", "Southern France", "Monaco"],
@@ -208,7 +364,15 @@ export const REGION_PACKAGES = {
       seasonalInfo: {
         peakSeason: "Apr-Oct",
         offSeason: "Nov-Mar",
-        optimalMonths: ["April", "May", "June", "July", "August", "September", "October"],
+        optimalMonths: [
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+        ],
         cautionMonths: ["November", "December", "January", "February", "March"],
       },
       estimatedSizeMB: 280,
@@ -222,7 +386,15 @@ export const REGION_PACKAGES = {
       seasonalInfo: {
         peakSeason: "Apr-Oct",
         offSeason: "Nov-Mar",
-        optimalMonths: ["April", "May", "June", "July", "August", "September", "October"],
+        optimalMonths: [
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+        ],
         cautionMonths: ["November", "December", "January", "February", "March"],
       },
       estimatedSizeMB: 350,
@@ -237,7 +409,15 @@ export const REGION_PACKAGES = {
         peakSeason: "May-Sep",
         offSeason: "Oct-Apr",
         optimalMonths: ["May", "June", "July", "August", "September"],
-        cautionMonths: ["October", "November", "December", "January", "February", "March", "April"],
+        cautionMonths: [
+          "October",
+          "November",
+          "December",
+          "January",
+          "February",
+          "March",
+          "April",
+        ],
       },
       estimatedSizeMB: 180,
       includedAreas: ["Croatia", "Montenegro", "Albania", "Bosnia"],
@@ -250,14 +430,22 @@ export const REGION_PACKAGES = {
       seasonalInfo: {
         peakSeason: "Apr-Oct",
         offSeason: "Nov-Mar",
-        optimalMonths: ["April", "May", "June", "July", "August", "September", "October"],
+        optimalMonths: [
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+        ],
         cautionMonths: ["November", "December", "January", "February", "March"],
       },
       estimatedSizeMB: 300,
       includedAreas: ["Morocco", "Algeria", "Tunisia", "Libya"],
     },
   ],
-  "Pacific": [
+  Pacific: [
     {
       id: "pacific_south",
       name: "South Pacific Package",
@@ -267,11 +455,26 @@ export const REGION_PACKAGES = {
         peakSeason: "Apr-Nov",
         offSeason: "Dec-Mar",
         cycloneSeason: "Dec-Mar",
-        optimalMonths: ["April", "May", "June", "July", "August", "September", "October", "November"],
+        optimalMonths: [
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+        ],
         cautionMonths: ["December", "January", "February", "March"],
       },
       estimatedSizeMB: 450,
-      includedAreas: ["French Polynesia", "Fiji", "Tonga", "Samoa", "Cook Islands"],
+      includedAreas: [
+        "French Polynesia",
+        "Fiji",
+        "Tonga",
+        "Samoa",
+        "Cook Islands",
+      ],
     },
     {
       id: "pacific_north",
@@ -282,7 +485,15 @@ export const REGION_PACKAGES = {
         peakSeason: "May-Sep Alaska, year-round Hawaii",
         offSeason: "Oct-Apr Alaska",
         optimalMonths: ["May", "June", "July", "August", "September"],
-        cautionMonths: ["October", "November", "December", "January", "February", "March", "April"],
+        cautionMonths: [
+          "October",
+          "November",
+          "December",
+          "January",
+          "February",
+          "March",
+          "April",
+        ],
       },
       estimatedSizeMB: 520,
       includedAreas: ["Hawaii", "Alaska", "Aleutian Islands"],
@@ -296,8 +507,22 @@ export const REGION_PACKAGES = {
         peakSeason: "Nov-Apr",
         offSeason: "May-Oct",
         typhoonSeason: "May-Oct",
-        optimalMonths: ["November", "December", "January", "February", "March", "April"],
-        cautionMonths: ["May", "June", "July", "August", "September", "October"],
+        optimalMonths: [
+          "November",
+          "December",
+          "January",
+          "February",
+          "March",
+          "April",
+        ],
+        cautionMonths: [
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+        ],
       },
       estimatedSizeMB: 480,
       includedAreas: ["Philippines", "Indonesia", "Papua New Guinea", "Borneo"],
@@ -313,8 +538,24 @@ export const REGION_PACKAGES = {
         peakSeason: "Oct-May",
         offSeason: "Jun-Nov",
         hurricaneSeason: "Jun-Nov",
-        optimalMonths: ["October", "November", "December", "January", "February", "March", "April", "May"],
-        cautionMonths: ["June", "July", "August", "September", "October", "November"],
+        optimalMonths: [
+          "October",
+          "November",
+          "December",
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+        ],
+        cautionMonths: [
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+        ],
       },
       estimatedSizeMB: 160,
       includedAreas: ["Texas", "Louisiana", "Houston", "New Orleans"],
@@ -327,7 +568,14 @@ export const REGION_PACKAGES = {
       seasonalInfo: {
         peakSeason: "Year-round, peak spring/fall",
         offSeason: "Summer heat",
-        optimalMonths: ["March", "April", "May", "September", "October", "November"],
+        optimalMonths: [
+          "March",
+          "April",
+          "May",
+          "September",
+          "October",
+          "November",
+        ],
         cautionMonths: ["June", "July", "August"],
       },
       estimatedSizeMB: 80,
@@ -341,11 +589,24 @@ export const REGION_PACKAGES = {
       seasonalInfo: {
         peakSeason: "Year-round, peak winter",
         offSeason: "Summer heat/humidity",
-        optimalMonths: ["October", "November", "December", "January", "February", "March", "April"],
+        optimalMonths: [
+          "October",
+          "November",
+          "December",
+          "January",
+          "February",
+          "March",
+          "April",
+        ],
         cautionMonths: ["May", "June", "July", "August", "September"],
       },
       estimatedSizeMB: 140,
-      includedAreas: ["Florida Gulf Coast", "Tampa Bay", "Fort Myers", "Pensacola"],
+      includedAreas: [
+        "Florida Gulf Coast",
+        "Tampa Bay",
+        "Fort Myers",
+        "Pensacola",
+      ],
     },
   ],
   "Southern Ocean": [
@@ -358,7 +619,15 @@ export const REGION_PACKAGES = {
         peakSeason: "Nov-Mar",
         offSeason: "Apr-Oct",
         optimalMonths: ["November", "December", "January", "February", "March"],
-        cautionMonths: ["April", "May", "June", "July", "August", "September", "October"],
+        cautionMonths: [
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+        ],
       },
       estimatedSizeMB: 380,
       includedAreas: ["Argentina", "Chile", "Falkland Islands", "Cape Horn"],
@@ -372,10 +641,23 @@ export const REGION_PACKAGES = {
         peakSeason: "Nov-Mar",
         offSeason: "Apr-Oct",
         optimalMonths: ["November", "December", "January", "February", "March"],
-        cautionMonths: ["April", "May", "June", "July", "August", "September", "October"],
+        cautionMonths: [
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+        ],
       },
       estimatedSizeMB: 520,
-      includedAreas: ["South Africa", "Madagascar", "Australia", "Kerguelen Islands"],
+      includedAreas: [
+        "South Africa",
+        "Madagascar",
+        "Australia",
+        "Kerguelen Islands",
+      ],
     },
   ],
 };
@@ -384,7 +666,7 @@ export const REGION_PACKAGES = {
 export const getAllPackages = () => {
   const allPackages = [];
   Object.entries(REGION_PACKAGES).forEach(([region, packages]) => {
-    packages.forEach(pkg => {
+    packages.forEach((pkg) => {
       allPackages.push({
         ...pkg,
         region,
@@ -400,23 +682,269 @@ export const getPackagesByRegion = (region) => {
 
 export const getPackageById = (packageId) => {
   const allPackages = getAllPackages();
-  return allPackages.find(pkg => pkg.id === packageId);
+  return allPackages.find((pkg) => pkg.id === packageId);
 };
 
 export const getSeasonalRecommendation = (seasonalInfo) => {
   const currentDate = new Date();
-  const currentMonth = currentDate.toLocaleString('default', { month: 'long' });
-  
+  const currentMonth = currentDate.toLocaleString("default", { month: "long" });
+
   if (seasonalInfo.cautionMonths.includes(currentMonth)) {
-    if (seasonalInfo.hurricaneSeason) return '⚠️ Hurricane season - exercise caution';
-    if (seasonalInfo.cycloneSeason) return '⚠️ Cyclone season - exercise caution';
-    if (seasonalInfo.typhoonSeason) return '⚠️ Typhoon season - exercise caution';
-    return '⚠️ Off-season - limited services';
+    if (seasonalInfo.hurricaneSeason)
+      return "⚠️ Hurricane season - exercise caution";
+    if (seasonalInfo.cycloneSeason)
+      return "⚠️ Cyclone season - exercise caution";
+    if (seasonalInfo.typhoonSeason)
+      return "⚠️ Typhoon season - exercise caution";
+    return "⚠️ Off-season - limited services";
   }
-  
+
   if (seasonalInfo.optimalMonths.includes(currentMonth)) {
-    return '✅ Peak season - ideal conditions';
+    return "✅ Peak season - ideal conditions";
   }
-  
-  return 'ℹ️ Shoulder season - generally good conditions';
+
+  return "ℹ️ Shoulder season - generally good conditions";
 };
+
+// ── AIS coverage boxes ───────────────────────────────────────────────────────
+// MUST stay in sync with AIS_REGION_BOXES in
+// CruisaPalooza/functions/src/index.ts — coastal bands the AIS ingestion
+// service subscribes to on AISStream. The CPAdmin AIS page lets an admin pick
+// one at a time to monitor; selecting it writes a viewport heartbeat that
+// activates that box's coverage.
+export const AIS_INGESTION_URL =
+  import.meta.env.VITE_AIS_INGESTION_URL ||
+  "https://ais-ingestion-383368597239.us-central1.run.app";
+
+export const AIS_REGION_BOXES = [
+  // US East Coast
+  {
+    id: "us_east_gulf_of_maine",
+    region: "US East Coast",
+    label: "Gulf of Maine",
+    north: 45.3,
+    south: 41.2,
+    west: -71.4,
+    east: -66.7,
+  },
+  {
+    id: "us_east_sne_nybight",
+    region: "US East Coast",
+    label: "S. New England / NY Bight",
+    north: 41.6,
+    south: 39.3,
+    west: -74.4,
+    east: -69.6,
+  },
+  {
+    id: "us_east_midatlantic",
+    region: "US East Coast",
+    label: "Mid-Atlantic",
+    north: 40.3,
+    south: 36.2,
+    west: -77.4,
+    east: -73.0,
+  },
+  {
+    id: "us_east_carolinas_ga",
+    region: "US East Coast",
+    label: "Carolinas / Georgia",
+    north: 36.8,
+    south: 30.3,
+    west: -81.8,
+    east: -74.3,
+  },
+  {
+    id: "us_east_florida_atl",
+    region: "US East Coast",
+    label: "Florida (Atlantic)",
+    north: 31.0,
+    south: 24.0,
+    west: -82.5,
+    east: -79.1,
+  },
+  // US Gulf
+  {
+    id: "us_gulf_florida_w",
+    region: "US Gulf",
+    label: "Florida (Gulf)",
+    north: 30.3,
+    south: 24.2,
+    west: -84.6,
+    east: -81.2,
+  },
+  {
+    id: "us_gulf_central",
+    region: "US Gulf",
+    label: "Panhandle / Louisiana",
+    north: 30.7,
+    south: 27.2,
+    west: -91.2,
+    east: -84.4,
+  },
+  {
+    id: "us_gulf_texas",
+    region: "US Gulf",
+    label: "Louisiana / Texas",
+    north: 30.1,
+    south: 25.7,
+    west: -97.8,
+    east: -91.0,
+  },
+  // US West
+  {
+    id: "us_west_socal",
+    region: "US West",
+    label: "Southern California",
+    north: 34.8,
+    south: 32.2,
+    west: -121.2,
+    east: -116.8,
+  },
+  {
+    id: "us_west_central_ca",
+    region: "US West",
+    label: "Central California",
+    north: 38.7,
+    south: 34.3,
+    west: -123.8,
+    east: -119.6,
+  },
+  {
+    id: "us_west_norcal_or",
+    region: "US West",
+    label: "N. California / Oregon",
+    north: 46.4,
+    south: 38.2,
+    west: -125.9,
+    east: -122.6,
+  },
+  {
+    id: "us_west_wa_salish",
+    region: "US West",
+    label: "Washington / Salish Sea",
+    north: 49.1,
+    south: 46.1,
+    west: -125.6,
+    east: -121.9,
+  },
+  {
+    id: "us_west_baja_pacific",
+    region: "US West",
+    label: "Baja (Pacific)",
+    north: 32.6,
+    south: 22.7,
+    west: -118.3,
+    east: -109.3,
+  },
+  {
+    id: "us_west_sea_of_cortez",
+    region: "US West",
+    label: "Sea of Cortez",
+    north: 31.6,
+    south: 22.9,
+    west: -114.9,
+    east: -105.8,
+  },
+  // Caribbean
+  {
+    id: "carib_bahamas",
+    region: "Caribbean",
+    label: "Bahamas",
+    north: 27.5,
+    south: 20.6,
+    west: -79.6,
+    east: -72.3,
+  },
+  {
+    id: "carib_greater_ant",
+    region: "Caribbean",
+    label: "Greater Antilles",
+    north: 23.7,
+    south: 17.3,
+    west: -85.4,
+    east: -64.1,
+  },
+  {
+    id: "carib_leeward_wind",
+    region: "Caribbean",
+    label: "Leeward / Windward Is.",
+    north: 18.9,
+    south: 10.8,
+    west: -65.8,
+    east: -59.0,
+  },
+  {
+    id: "carib_nw_shelf",
+    region: "Caribbean",
+    label: "NW Caribbean shelf",
+    north: 22.2,
+    south: 15.3,
+    west: -88.7,
+    east: -79.3,
+  },
+  {
+    id: "carib_sw_panama",
+    region: "Caribbean",
+    label: "SW Caribbean / Panama",
+    north: 13.2,
+    south: 8.6,
+    west: -83.7,
+    east: -75.3,
+  },
+  // Mediterranean
+  {
+    id: "med_west",
+    region: "Mediterranean",
+    label: "Western Med",
+    north: 44.0,
+    south: 35.6,
+    west: -6.2,
+    east: 10.2,
+  },
+  {
+    id: "med_central",
+    region: "Mediterranean",
+    label: "Central Med",
+    north: 46.0,
+    south: 31.8,
+    west: 7.8,
+    east: 20.2,
+  },
+  {
+    id: "med_east",
+    region: "Mediterranean",
+    label: "Eastern Med",
+    north: 41.7,
+    south: 30.8,
+    west: 18.8,
+    east: 37.2,
+  },
+  // Pacific
+  {
+    id: "pacific_hawaii",
+    region: "Pacific",
+    label: "Hawaii",
+    north: 23.5,
+    south: 17.8,
+    west: -161.6,
+    east: -153.4,
+  },
+  {
+    id: "pacific_pnw_seak",
+    region: "Pacific",
+    label: "BC / SE Alaska",
+    north: 60.7,
+    south: 47.3,
+    west: -141.0,
+    east: -121.9,
+  },
+];
+
+/** AIS_REGION_BOXES grouped by canonical region, preserving order. */
+export const AIS_REGION_GROUPS = AIS_REGION_BOXES.reduce((groups, box) => {
+  const g = groups.find((x) => x.region === box.region);
+  if (g) g.boxes.push(box);
+  else groups.push({ region: box.region, boxes: [box] });
+  return groups;
+}, []);

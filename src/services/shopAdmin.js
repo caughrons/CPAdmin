@@ -47,11 +47,11 @@ export async function setOrderFulfilled(orderId, fulfilled) {
   return callShop("shopSetOrderFulfilled", { orderId, fulfilled });
 }
 
-// TODO(pre-launch): shopDeleteOrders permanently destroys payment/audit
-// records. Fine for wiping test data now; must be locked down (or removed
-// from the UI) before the shop goes live with real customer orders.
-export async function deleteOrders(orderIds) {
-  return callShop("shopDeleteOrders", { orderIds });
+// Deletes a single order. Deliberately single-id only (no bulk path) — this
+// permanently destroys a payment/audit record, so the backend itself rejects
+// anything but one id at a time.
+export async function deleteOrder(orderId) {
+  return callShop("shopDeleteOrder", { orderId });
 }
 
 export async function uploadProductImage(file) {

@@ -28,6 +28,7 @@ import {
   Typography,
 } from "@mui/material";
 import DeleteIcon from "@mui/icons-material/Archive";
+import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import StarIcon from "@mui/icons-material/Star";
 import StarBorderIcon from "@mui/icons-material/StarBorder";
 import EditIcon from "@mui/icons-material/Edit";
@@ -44,7 +45,7 @@ import {
   rebuildCatalogState,
   uploadProductImage,
   setOrderFulfilled,
-  deleteOrders,
+  deleteOrder,
 } from "@/services/shopAdmin";
 
 if (!firebase.apps.length) {
@@ -943,8 +944,7 @@ function OrdersPanel() {
   const [error, setError] = useState(null);
   const [updating, setUpdating] = useState({});
   const [unfulfilledOnly, setUnfulfilledOnly] = useState(false);
-  const [selected, setSelected] = useState(() => new Set());
-  const [deleting, setDeleting] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -958,7 +958,6 @@ function OrdersPanel() {
       const byId = {};
       prodSnap.docs.forEach((d) => { byId[d.id] = { id: d.id, ...d.data() }; });
       setProductsById(byId);
-      setSelected(new Set());
     } catch (e) {
       setError(e?.message ?? String(e));
     } finally {
@@ -983,51 +982,24 @@ function OrdersPanel() {
   };
 
   const visibleOrders = unfulfilledOnly ? orders.filter((o) => !o.fulfilled) : orders;
-  const allVisibleSelected = visibleOrders.length > 0 && visibleOrders.every((o) => selected.has(o.id));
-  const someVisibleSelected = visibleOrders.some((o) => selected.has(o.id));
 
-  const toggleOrderSelected = (orderId) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(orderId)) next.delete(orderId); else next.add(orderId);
-      return next;
-    });
-  };
-
-  const toggleSelectAllVisible = () => {
-    setSelected((prev) => {
-      if (allVisibleSelected) {
-        const next = new Set(prev);
-        visibleOrders.forEach((o) => next.delete(o.id));
-        return next;
-      }
-      const next = new Set(prev);
-      visibleOrders.forEach((o) => next.add(o.id));
-      return next;
-    });
-  };
-
-  // TODO(pre-launch): bulk order deletion is only here to wipe test/junk
-  // orders during QA. It permanently destroys payment/audit records
-  // (shopDeleteOrders bypasses Firestore rules via the Admin SDK). Before the
-  // shop goes live, either remove this button, restrict it to
-  // pending/failed orders, or add a stronger confirmation step.
-  const handleBulkDelete = async () => {
-    const ids = Array.from(selected);
-    if (ids.length === 0) return;
-    if (!window.confirm(`Permanently delete ${ids.length} order${ids.length === 1 ? "" : "s"}? This cannot be undone.`)) {
+  // Single-order delete only, with a confirmation step naming the specific
+  // order — this permanently destroys a payment/audit record, so there is no
+  // bulk path and no way to select more than one at a time.
+  const handleDeleteOrder = async (order) => {
+    const label = order.id.slice(0, 14) + "…";
+    if (!window.confirm(`Permanently delete order ${label}? This cannot be undone.`)) {
       return;
     }
-    setDeleting(true);
+    setDeletingId(order.id);
     setError(null);
     try {
-      await deleteOrders(ids);
-      setOrders((prev) => prev.filter((o) => !selected.has(o.id)));
-      setSelected(new Set());
+      await deleteOrder(order.id);
+      setOrders((prev) => prev.filter((o) => o.id !== order.id));
     } catch (e) {
       setError(e?.message ?? String(e));
     } finally {
-      setDeleting(false);
+      setDeletingId(null);
     }
   };
 
@@ -1036,17 +1008,6 @@ function OrdersPanel() {
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={1}>
         <Typography variant="h6">Orders</Typography>
         <Box display="flex" gap={2} alignItems="center">
-          {selected.size > 0 && (
-            <Button
-              variant="outlined"
-              color="error"
-              size="small"
-              onClick={handleBulkDelete}
-              disabled={deleting}
-            >
-              {deleting ? "Deleting…" : `Delete Selected (${selected.size})`}
-            </Button>
-          )}
           <FormControlLabel
             control={<Switch checked={unfulfilledOnly} onChange={(e) => setUnfulfilledOnly(e.target.checked)} />}
             label="Unfulfilled only"
@@ -1060,14 +1021,6 @@ function OrdersPanel() {
           <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell padding="checkbox">
-                  <Checkbox
-                    size="small"
-                    checked={allVisibleSelected}
-                    indeterminate={someVisibleSelected && !allVisibleSelected}
-                    onChange={toggleSelectAllVisible}
-                  />
-                </TableCell>
                 <TableCell>Date</TableCell>
                 <TableCell>Order</TableCell>
                 <TableCell>Customer</TableCell>
@@ -1075,20 +1028,14 @@ function OrdersPanel() {
                 <TableCell>Total</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell align="center">Filled</TableCell>
+                <TableCell align="center">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {visibleOrders.map((order) => {
                 const items = orderLineItems(order, productsById);
                 return (
-                  <TableRow key={order.id} selected={selected.has(order.id)}>
-                    <TableCell padding="checkbox">
-                      <Checkbox
-                        size="small"
-                        checked={selected.has(order.id)}
-                        onChange={() => toggleOrderSelected(order.id)}
-                      />
-                    </TableCell>
+                  <TableRow key={order.id}>
                     <TableCell sx={{ whiteSpace: "nowrap" }}>
                       {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleString() : "—"}
                     </TableCell>
@@ -1126,6 +1073,20 @@ function OrdersPanel() {
                         disabled={updating[order.id]}
                         size="small"
                       />
+                    </TableCell>
+                    <TableCell align="center">
+                      <Tooltip title="Delete order">
+                        <span>
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={() => handleDeleteOrder(order)}
+                            disabled={deletingId === order.id}
+                          >
+                            <DeleteForeverIcon fontSize="small" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
                     </TableCell>
                   </TableRow>
                 );

@@ -22,9 +22,9 @@ import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { fetchRegionAisStats } from "@/services/aisStats";
 import { AIS_REGION_BOXES } from "@/config";
-import firebase from "firebase/app";
-import "firebase/database";
-import "firebase/auth";
+import firebase from "firebase/compat/app";
+import "firebase/compat/database";
+import "firebase/compat/auth";
 import { AuthContext } from "@/contexts/FirebaseAuthContext";
 
 const rtdb = firebase.database();

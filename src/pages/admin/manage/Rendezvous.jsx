@@ -31,9 +31,9 @@ import EditIcon from "@mui/icons-material/Edit";
 import SaveIcon from "@mui/icons-material/Save";
 import CancelIcon from "@mui/icons-material/Cancel";
 import { DragDropContext, Draggable, Droppable } from "@hello-pangea/dnd";
-import firebase from "firebase/app";
-import "firebase/firestore";
-import "firebase/auth";
+import firebase from "firebase/compat/app";
+import "firebase/compat/firestore";
+import "firebase/compat/auth";
 import { firebaseConfig } from "@/config";
 
 if (!firebase.apps.length) {

@@ -1,5 +1,9 @@
 import "react-app-polyfill/stable";
 
+// Must stay first among app imports: sets up Firebase + App Check before
+// any module initializes Firebase on its own.
+import "./firebaseInit";
+
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";

@@ -26,9 +26,9 @@ import {
   Typography,
 } from "@mui/material";
 import { RefreshCw, Star } from "lucide-react";
-import firebase from "firebase/app";
-import "firebase/database";
-import "firebase/functions";
+import firebase from "firebase/compat/app";
+import "firebase/compat/database";
+import "firebase/compat/functions";
 
 const rtdb = firebase.database();
 const functions = firebase.app().functions("us-central1");

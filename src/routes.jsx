@@ -35,6 +35,7 @@ import PotentialSpam from "@/pages/admin/manage/PotentialSpam";
 import MapAdmin from "@/pages/admin/manage/MapAdmin";
 import AIS from "@/pages/admin/manage/AIS";
 import AdminChat from "@/pages/admin/manage/Chat";
+import FeedPosts from "@/pages/admin/manage/FeedPosts";
 import AdminMessages from "@/pages/admin/manage/AdminMessages";
 
 import TestFirestoreQuery from "@/pages/admin/TestFirestoreQuery";
@@ -80,6 +81,7 @@ const routes = [
           { path: "potential-spam", element: <PotentialSpam /> },
           { path: "map", element: <MapAdmin /> },
           { path: "map/ais", element: <AIS /> },
+          { path: "feed-posts", element: <FeedPosts /> },
           { path: "chat", element: <AdminChat /> },
           { path: "admin-messages", element: <AdminMessages /> },
         ],

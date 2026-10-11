@@ -16,6 +16,7 @@ import {
   Server,
   ShieldAlert,
   BellRing,
+  Rss,
 } from "lucide-react";
 
 const manageSection = [
@@ -78,6 +79,11 @@ const manageSection = [
         title: "Tile Management",
       },
     ],
+  },
+  {
+    href: "/manage/feed-posts",
+    icon: Rss,
+    title: "Feed Posts",
   },
   {
     href: "/manage/chat",

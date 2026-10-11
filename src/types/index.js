@@ -13,8 +13,8 @@
  * @property {string} requesterId
  * @property {string} requesterEmail
  * @property {'pending'|'approved'|'rejected'} status
- * @property {import('firebase/firestore').Timestamp} createdAt
- * @property {import('firebase/firestore').Timestamp|null} reviewedAt
+ * @property {import('firebase/compat/firestore').Timestamp} createdAt
+ * @property {import('firebase/compat/firestore').Timestamp|null} reviewedAt
  * @property {string|null} reviewedBy
  * @property {string|null} reviewNotes
  * @property {Object|null} proposedData
@@ -34,8 +34,8 @@
  * @property {string|null} ownerId
  * @property {string|null} primaryImageR2Key
  * @property {number|null} averageRating
- * @property {import('firebase/firestore').Timestamp} createdAt
- * @property {import('firebase/firestore').Timestamp} updatedAt
+ * @property {import('firebase/compat/firestore').Timestamp} createdAt
+ * @property {import('firebase/compat/firestore').Timestamp} updatedAt
  */
 
 /**
@@ -51,9 +51,9 @@
  * @property {string|null} imageUrl
  * @property {string|null} imageR2Key
  * @property {'pending'|'released'|'deleted'} status
- * @property {import('firebase/firestore').Timestamp} scheduledRelease
- * @property {import('firebase/firestore').Timestamp|null} actualRelease
- * @property {import('firebase/firestore').Timestamp} createdAt
+ * @property {import('firebase/compat/firestore').Timestamp} scheduledRelease
+ * @property {import('firebase/compat/firestore').Timestamp|null} actualRelease
+ * @property {import('firebase/compat/firestore').Timestamp} createdAt
  */
 
 /**
@@ -82,8 +82,8 @@
  * @property {string} email
  * @property {string} displayName
  * @property {string|null} avatar
- * @property {import('firebase/firestore').Timestamp} createdAt
- * @property {import('firebase/firestore').Timestamp|null} lastActiveAt
+ * @property {import('firebase/compat/firestore').Timestamp} createdAt
+ * @property {import('firebase/compat/firestore').Timestamp|null} lastActiveAt
  */
 
 /**

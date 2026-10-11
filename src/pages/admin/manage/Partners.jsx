@@ -23,8 +23,8 @@ import {
   Typography,
 } from "@mui/material";
 import { RefreshCw } from "lucide-react";
-import firebase from "firebase/app";
-import "firebase/database";
+import firebase from "firebase/compat/app";
+import "firebase/compat/database";
 
 const rtdb = firebase.database();
 

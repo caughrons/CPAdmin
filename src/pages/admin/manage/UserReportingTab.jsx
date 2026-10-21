@@ -30,7 +30,35 @@ const STATUS_CHIP = {
 
 function statusOf(row) {
   if (row.status !== "resolved") return STATUS_CHIP.pending;
-  return row.disposition === "removed" ? STATUS_CHIP.removed : STATUS_CHIP.allowed;
+  return row.disposition === "removed"
+    ? STATUS_CHIP.removed
+    : STATUS_CHIP.allowed;
+}
+
+// Apple (Guideline 1.2) requires reports to be acted on within 24 hours.
+const SLA_HOURS = 24;
+
+function hoursPending(row) {
+  if (row.status === "resolved" || !row.createdAt) return 0;
+  return (Date.now() - row.createdAt.getTime()) / 3600000;
+}
+
+function reportedUserLabel(row) {
+  const parts = [];
+  if (row.contentOwnerName) parts.push(row.contentOwnerName);
+  if (row.contentOwnerCpid) parts.push(`~${row.contentOwnerCpid}`);
+  if (parts.length === 0 && row.contentOwnerId) parts.push(row.contentOwnerId);
+  return parts.join(" ");
+}
+
+// What "remove" means for this report, or null if there's nothing to remove.
+function removeActionFor(row) {
+  if (row.parentType === "user") return null;
+  if (row.parentType === "chatMessage")
+    return { action: "removeContent", label: "Delete Message" };
+  if (row.commentId)
+    return { action: "removeComment", label: "Delete Comment" };
+  return { action: "removeContent", label: "Delete Content" };
 }
 
 export default function UserReportingTab() {
@@ -66,7 +94,9 @@ export default function UserReportingTab() {
       months.push(new Date(now.getFullYear(), now.getMonth() - i, 1));
     }
     const counts = {};
-    months.forEach((d) => { counts[monthKey(d)] = 0; });
+    months.forEach((d) => {
+      counts[monthKey(d)] = 0;
+    });
     reports.forEach((r) => {
       if (!r.createdAt) return;
       const key = monthKey(r.createdAt);
@@ -74,7 +104,9 @@ export default function UserReportingTab() {
       counts[key] += 1;
     });
     return {
-      labels: months.map((d) => d.toLocaleDateString("en-US", { month: "short", year: "2-digit" })),
+      labels: months.map((d) =>
+        d.toLocaleDateString("en-US", { month: "short", year: "2-digit" })
+      ),
       datasets: [
         {
           label: "Reports Submitted",
@@ -87,14 +119,21 @@ export default function UserReportingTab() {
     };
   }, [reports, theme]);
 
-  const chartOptions = useMemo(() => ({
-    maintainAspectRatio: false,
-    plugins: { legend: { display: false } },
-    scales: {
-      x: { grid: { color: "rgba(0,0,0,0.05)" } },
-      y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: "rgba(0,0,0,0.05)" } },
-    },
-  }), []);
+  const chartOptions = useMemo(
+    () => ({
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: "rgba(0,0,0,0.05)" } },
+        y: {
+          beginAtZero: true,
+          ticks: { precision: 0 },
+          grid: { color: "rgba(0,0,0,0.05)" },
+        },
+      },
+    }),
+    []
+  );
 
   // ── Frequent submitters: >2 reports filed in the past 30 days ──────────────
   const frequentSubmitters = useMemo(() => {
@@ -105,10 +144,13 @@ export default function UserReportingTab() {
       if (!r.createdAt || r.createdAt < cutoff) return;
       const key = r.reporterId;
       if (!key) return;
-      if (!byReporter[key]) byReporter[key] = { name: r.reporterName || key, count: 0 };
+      if (!byReporter[key])
+        byReporter[key] = { name: r.reporterName || key, count: 0 };
       byReporter[key].count += 1;
     });
-    return Object.values(byReporter).filter((s) => s.count > 2).sort((a, b) => b.count - a.count);
+    return Object.values(byReporter)
+      .filter((s) => s.count > 2)
+      .sort((a, b) => b.count - a.count);
   }, [reports]);
 
   // ── Repeat offenders: >1 removed report against the same poster, past 90 days
@@ -117,20 +159,48 @@ export default function UserReportingTab() {
     cutoff.setDate(cutoff.getDate() - 90);
     const byOwner = {};
     reports.forEach((r) => {
-      if (r.disposition !== "removed" || !r.resolvedAt || r.resolvedAt < cutoff || !r.contentOwnerId) return;
+      if (
+        r.disposition !== "removed" ||
+        !r.resolvedAt ||
+        r.resolvedAt < cutoff ||
+        !r.contentOwnerId
+      )
+        return;
       const key = r.contentOwnerId;
-      if (!byOwner[key]) byOwner[key] = { name: r.contentOwnerName || key, count: 0 };
+      if (!byOwner[key])
+        byOwner[key] = { name: r.contentOwnerName || key, count: 0 };
       byOwner[key].count += 1;
     });
-    return Object.values(byOwner).filter((s) => s.count > 1).sort((a, b) => b.count - a.count);
+    return Object.values(byOwner)
+      .filter((s) => s.count > 1)
+      .sort((a, b) => b.count - a.count);
   }, [reports]);
 
-  const handleAction = async (action) => {
+  const pendingCount = useMemo(
+    () => reports.filter((r) => r.status !== "resolved").length,
+    [reports]
+  );
+  const overdueCount = useMemo(
+    () => reports.filter((r) => hoursPending(r) >= SLA_HOURS).length,
+    [reports]
+  );
+
+  const handleAction = async (action, { suspendUser = false } = {}) => {
     if (!selected) return;
+    if (
+      suspendUser &&
+      !window.confirm(
+        `Suspend ${
+          reportedUserLabel(selected) || "this user"
+        }? They will be signed out of the app immediately and cannot sign back in.`
+      )
+    ) {
+      return;
+    }
     setActionLoading(true);
     setError(null);
     try {
-      await resolveReport(selected.id, action);
+      await resolveReport(selected.id, action, { suspendUser });
       setSelected(null);
       await load();
     } catch (e) {
@@ -148,16 +218,35 @@ export default function UserReportingTab() {
       valueFormatter: (value) => (value ? value.toLocaleString() : ""),
     },
     { field: "typeLabel", headerName: "Type", width: 170 },
-    { field: "reporterName", headerName: "Sender", width: 160 },
+    {
+      field: "contentOwnerName",
+      headerName: "Reported User",
+      width: 190,
+      valueGetter: (_value, row) => reportedUserLabel(row),
+    },
+    { field: "reporterName", headerName: "Reported By", width: 160 },
     { field: "reason", headerName: "Comment", flex: 1, minWidth: 220 },
-    { field: "contentPreview", headerName: "Link to Content", flex: 1, minWidth: 220 },
+    {
+      field: "contentPreview",
+      headerName: "Link to Content",
+      flex: 1,
+      minWidth: 220,
+    },
     {
       field: "status",
       headerName: "Status",
       width: 110,
       renderCell: (params) => {
         const s = statusOf(params.row);
-        return <Chip size="small" label={s.label} color={s.color} />;
+        const overdue = hoursPending(params.row) >= SLA_HOURS;
+        return (
+          <Chip
+            size="small"
+            label={overdue ? "Overdue" : s.label}
+            color={overdue ? "error" : s.color}
+            variant={overdue ? "filled" : "outlined"}
+          />
+        );
       },
     },
   ];
@@ -167,6 +256,17 @@ export default function UserReportingTab() {
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
+        </Alert>
+      )}
+
+      {pendingCount > 0 && (
+        <Alert severity={overdueCount > 0 ? "error" : "warning"} sx={{ mb: 2 }}>
+          {pendingCount} pending report{pendingCount === 1 ? "" : "s"}
+          {overdueCount > 0
+            ? ` — ${overdueCount} older than ${SLA_HOURS} hours`
+            : ""}
+          . Apple requires reports to be acted on within {SLA_HOURS} hours:
+          remove the content and suspend the user if it violates the Terms.
         </Alert>
       )}
 
@@ -189,10 +289,19 @@ export default function UserReportingTab() {
           </Typography>
           <Box sx={{ mt: 1 }}>
             {frequentSubmitters.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">None</Typography>
+              <Typography variant="body2" color="text.secondary">
+                None
+              </Typography>
             ) : (
               frequentSubmitters.map((s) => (
-                <Box key={s.name} sx={{ display: "flex", justifyContent: "space-between", py: 0.5 }}>
+                <Box
+                  key={s.name}
+                  sx={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    py: 0.5,
+                  }}
+                >
                   <Typography variant="body2">{s.name}</Typography>
                   <Chip size="small" label={s.count} />
                 </Box>
@@ -209,10 +318,19 @@ export default function UserReportingTab() {
           </Typography>
           <Box sx={{ mt: 1 }}>
             {repeatOffenders.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">None</Typography>
+              <Typography variant="body2" color="text.secondary">
+                None
+              </Typography>
             ) : (
               repeatOffenders.map((s) => (
-                <Box key={s.name} sx={{ display: "flex", justifyContent: "space-between", py: 0.5 }}>
+                <Box
+                  key={s.name}
+                  sx={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    py: 0.5,
+                  }}
+                >
                   <Typography variant="body2">{s.name}</Typography>
                   <Chip size="small" label={s.count} color="error" />
                 </Box>
@@ -228,84 +346,176 @@ export default function UserReportingTab() {
           columns={columns}
           loading={loading}
           onRowClick={(params) => setSelected(params.row)}
-          initialState={{ sorting: { sortModel: [{ field: "createdAt", sort: "desc" }] } }}
+          initialState={{
+            sorting: { sortModel: [{ field: "createdAt", sort: "desc" }] },
+          }}
           disableSelectionOnClick
         />
       </Paper>
 
-      <Dialog open={!!selected} onClose={() => setSelected(null)} maxWidth="sm" fullWidth>
+      <Dialog
+        open={!!selected}
+        onClose={() => setSelected(null)}
+        maxWidth="sm"
+        fullWidth
+      >
         {selected && (
           <>
             <DialogTitle>{selected.typeLabel}</DialogTitle>
             <DialogContent>
               <Stack spacing={1.5} sx={{ mt: 1 }}>
                 <Box>
-                  <Typography variant="caption" color="text.secondary">Reported by</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Reported by
+                  </Typography>
                   <Typography variant="body2">
-                    {selected.reporterName} {selected.reporterEmail ? `(${selected.reporterEmail})` : ""}
+                    {selected.reporterName}{" "}
+                    {selected.reporterEmail
+                      ? `(${selected.reporterEmail})`
+                      : ""}
                   </Typography>
                 </Box>
 
                 <Divider />
 
                 <Box>
-                  <Typography variant="caption" color="text.secondary">Complaint</Typography>
-                  <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>{selected.reason}</Typography>
-                </Box>
-
-                <Divider />
-
-                <Box>
-                  <Typography variant="caption" color="text.secondary">Reported Content</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Complaint
+                  </Typography>
                   <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
-                    {selected.contentPreview || "(no preview available — content may already be gone)"}
+                    {selected.reason}
                   </Typography>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
+                </Box>
+
+                <Divider />
+
+                <Box>
+                  <Typography variant="caption" color="text.secondary">
+                    Reported Content
+                  </Typography>
+                  <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
+                    {selected.contentPreview ||
+                      "(no preview available — content may already be gone)"}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: "block", mt: 0.5 }}
+                  >
                     {selected.parentType} · {selected.parentId}
-                    {selected.commentId ? ` · comment ${selected.commentId}` : ""}
+                    {selected.commentId
+                      ? ` · comment ${selected.commentId}`
+                      : ""}
                   </Typography>
-                  {selected.contentOwnerName && (
-                    <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                      Posted by {selected.contentOwnerName}
+                </Box>
+
+                <Divider />
+
+                <Box>
+                  <Typography variant="caption" color="text.secondary">
+                    Reported User (real account)
+                  </Typography>
+                  {selected.contentOwnerId ? (
+                    <>
+                      <Typography variant="body2">
+                        {selected.contentOwnerName || "(no name)"}
+                        {selected.contentOwnerCpid
+                          ? ` · ~${selected.contentOwnerCpid}`
+                          : ""}
+                      </Typography>
+                      {selected.contentOwnerEmail && (
+                        <Typography variant="body2">
+                          {selected.contentOwnerEmail}
+                        </Typography>
+                      )}
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ display: "block" }}
+                      >
+                        uid {selected.contentOwnerId}
+                      </Typography>
+                      {selected.anonymousName && (
+                        <Typography
+                          variant="caption"
+                          sx={{ display: "block", mt: 0.5 }}
+                        >
+                          Shown to other users in Anchor Chat as{" "}
+                          <strong>{selected.anonymousName}</strong>
+                        </Typography>
+                      )}
+                    </>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      Unknown
                     </Typography>
                   )}
                 </Box>
 
                 {selected.status === "resolved" && (
-                  <Alert severity={selected.disposition === "removed" ? "error" : "success"}>
-                    Resolved — content was {selected.disposition}.
+                  <Alert
+                    severity={
+                      selected.disposition === "removed" ? "error" : "success"
+                    }
+                  >
+                    Resolved — content was {selected.disposition}
+                    {selected.userSuspended ? "; user suspended" : ""}.
                   </Alert>
                 )}
               </Stack>
             </DialogContent>
             <DialogActions>
               <Button onClick={() => setSelected(null)}>Close</Button>
-              {selected.status !== "resolved" && (
-                <>
-                  <Button color="success" onClick={() => handleAction("allow")} disabled={actionLoading}>
-                    Allow
-                  </Button>
-                  {selected.commentId ? (
-                    <Button
-                      color="error"
-                      variant="contained"
-                      onClick={() => handleAction("removeComment")}
-                      disabled={actionLoading}
-                    >
-                      Delete Comment
-                    </Button>
-                  ) : (
-                    <Button
-                      color="error"
-                      variant="contained"
-                      onClick={() => handleAction("removeContent")}
-                      disabled={actionLoading}
-                    >
-                      Delete Content
-                    </Button>
-                  )}
-                </>
-              )}
+              {selected.status !== "resolved" &&
+                (() => {
+                  const remove = removeActionFor(selected);
+                  const canSuspend = !!selected.contentOwnerId;
+                  return (
+                    <>
+                      <Button
+                        color="success"
+                        onClick={() => handleAction("allow")}
+                        disabled={actionLoading}
+                      >
+                        Allow
+                      </Button>
+                      {!remove && canSuspend && (
+                        <Button
+                          color="error"
+                          variant="contained"
+                          onClick={() =>
+                            handleAction("allow", { suspendUser: true })
+                          }
+                          disabled={actionLoading}
+                        >
+                          Suspend User
+                        </Button>
+                      )}
+                      {remove && (
+                        <Button
+                          color="error"
+                          variant="outlined"
+                          onClick={() => handleAction(remove.action)}
+                          disabled={actionLoading}
+                        >
+                          {remove.label}
+                        </Button>
+                      )}
+                      {remove && canSuspend && (
+                        <Button
+                          color="error"
+                          variant="contained"
+                          onClick={() =>
+                            handleAction(remove.action, { suspendUser: true })
+                          }
+                          disabled={actionLoading}
+                        >
+                          {remove.label} + Suspend User
+                        </Button>
+                      )}
+                    </>
+                  );
+                })()}
             </DialogActions>
           </>
         )}

@@ -50,8 +50,14 @@ export async function getReports({ days = 365, limit = 2000 } = {}) {
 /**
  * Resolve a report: 'removeContent' | 'removeComment' | 'allow'.
  * Deletes the underlying content/comment (if applicable) and emails the
- * reporter with the disposition.
+ * reporter with the disposition. `suspendUser: true` also ejects the user
+ * who posted it (disables the account and signs them out of the app
+ * immediately) — App Store 1.2.
  */
-export async function resolveReport(reportId, action) {
-  return callFunction("resolveReport", { reportId, action });
+export async function resolveReport(
+  reportId,
+  action,
+  { suspendUser = false } = {}
+) {
+  return callFunction("resolveReport", { reportId, action, suspendUser });
 }

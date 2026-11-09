@@ -91,7 +91,7 @@
     before the public app launch:
 
     1. Remove the pre-release notice banner below (the <div id="prereleaseBanner"> block).
-    2. Replace App Store link href with real App Store ID (search for id0000000000).
+    2. (Done 2026-11-09) App Store link uses the real App Store ID id6757194896.
     3. Replace assetlinks.json SHA-256 placeholder with the production
        release keystore fingerprint:
          keytool -list -v -keystore <your-release.keystore>
@@ -128,7 +128,7 @@
     <a class="btn btn-secondary" href="https://app.cruisapalooza.com" id="openAppBtn" style="display:none;">Open in App</a>
 
     <div class="store-badges">
-      <a id="appStoreLink" href="https://apps.apple.com/app/cruisapalooza/id0000000000" style="display:none;">
+      <a id="appStoreLink" href="https://apps.apple.com/app/cruisapalooza/id6757194896" style="display:none;">
         <img class="store-badge" src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" alt="Download on the App Store">
       </a>
       <a id="playStoreLink" href="https://play.google.com/store/apps/details?id=com.cruisapalooza.app" style="display:none;">
@@ -149,7 +149,7 @@
     const isAndroid = /Android/.test(navigator.userAgent);
     const isMobile  = isIOS || isAndroid;
 
-    const APP_STORE_URL  = 'https://apps.apple.com/app/cruisapalooza/id0000000000';
+    const APP_STORE_URL  = 'https://apps.apple.com/app/cruisapalooza/id6757194896';
     const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.cruisapalooza.app';
 
     if (isMobile) {

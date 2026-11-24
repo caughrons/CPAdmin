@@ -37,6 +37,7 @@ import AIS from "@/pages/admin/manage/AIS";
 import AdminChat from "@/pages/admin/manage/Chat";
 import FeedPosts from "@/pages/admin/manage/FeedPosts";
 import AdminMessages from "@/pages/admin/manage/AdminMessages";
+import ReservedCpids from "@/pages/admin/manage/ReservedCpids";
 
 import TestFirestoreQuery from "@/pages/admin/TestFirestoreQuery";
 import TileManagement from "@/pages/maps/TileManagement";
@@ -69,6 +70,7 @@ const routes = [
         children: [
           { path: "", element: <Navigate to="/manage/users" replace /> },
           { path: "users", element: <Users /> },
+          { path: "reserved-cpids", element: <ReservedCpids /> },
           { path: "communities", element: <Communities /> },
           { path: "partners", element: <Navigate to="/manage/communities" replace /> },
           { path: "sponsors", element: <Navigate to="/manage/communities" replace /> },

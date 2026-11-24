@@ -101,6 +101,34 @@ export async function adminForceCpidRename(uid, cpid, reason) {
   return await callFunction("adminForceCpidRename", { uid, cpid, reason });
 }
 
+// ── Reserved brand CP IDs ────────────────────────────────────────────────────
+
+/** All brand handles (default list + RTDB) with state and current holder. */
+export async function listBrandCpids() {
+  const result = await callFunction("adminListBrandCpids", {});
+  return result.rows;
+}
+
+/** Copy default-list handles not yet in RTDB. Returns { added, alreadyPresent }. */
+export async function seedBrandCpids() {
+  return await callFunction("adminSeedBrandCpids", {});
+}
+
+/** Add a brand handle, edit its label, or re-reserve a released one. */
+export async function upsertBrandCpid({ cpid, name, category, group }) {
+  return await callFunction("adminUpsertBrandCpid", { cpid, name, category, group });
+}
+
+/** Unblock a brand handle so anyone can claim it. */
+export async function releaseBrandCpid(cpid) {
+  return await callFunction("adminReleaseBrandCpid", { cpid });
+}
+
+/** Give a brand handle to a user. confirmEvict is required if someone else holds it. */
+export async function assignBrandCpid(cpid, uid, reason, confirmEvict = false) {
+  return await callFunction("adminAssignBrandCpid", { cpid, uid, reason, confirmEvict });
+}
+
 /** Release a reserved CP ID so it can be claimed again (admin only). */
 export async function adminReleaseReservedCpid(cpid, reason) {
   return await callFunction("adminReleaseReservedCpid", { cpid, reason });

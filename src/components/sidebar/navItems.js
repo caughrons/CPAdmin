@@ -17,6 +17,7 @@ import {
   ShieldAlert,
   BellRing,
   Rss,
+  AtSign,
 } from "lucide-react";
 
 const manageSection = [
@@ -24,6 +25,11 @@ const manageSection = [
     href: "/manage/users",
     icon: Users,
     title: "Users",
+  },
+  {
+    href: "/manage/reserved-cpids",
+    icon: AtSign,
+    title: "Reserved CP IDs",
   },
   {
     href: "/manage/communities",

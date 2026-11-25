@@ -63,6 +63,7 @@ import {
   processSnapshotBatch,
   analyzeR2Storage,
   quickStorageStats,
+  rebuildSpotBundles,
 } from "@/services/spotsAdmin";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -640,6 +641,32 @@ function Spots() {
       await loadSpots();
     } catch (e) {
       alert(`Re-derive failed: ${e.message}`);
+    }
+  };
+
+  const [bundlesRebuilding, setBundlesRebuilding] = useState(false);
+
+  const handleRebuildBundles = async () => {
+    const region = filters.region || "";
+    const label = region || "ALL regions";
+    if (!confirm(
+      `Rebuild the spot download bundle for ${label}?\n\n` +
+      `New region downloads in the app use these files. They also rebuild ` +
+      `automatically every night and after a reseed.`
+    )) return;
+    setBundlesRebuilding(true);
+    try {
+      const { results = [] } = await rebuildSpotBundles(region || undefined);
+      const lines = results.map((r) =>
+        r.error ? `  ${r.region}: FAILED — ${r.error}`
+          : r.skipped ? `  ${r.region}: no spots, skipped`
+          : `  ${r.region}: ${r.spotCount} spots, ${(r.bytes / 1048576).toFixed(1)} MB`
+      ).join("\n");
+      alert(`Bundles rebuilt:\n${lines}`);
+    } catch (e) {
+      alert(`Bundle rebuild failed: ${e.message}`);
+    } finally {
+      setBundlesRebuilding(false);
     }
   };
 
@@ -1875,6 +1902,17 @@ function Spots() {
                 sx={{ mr: 1 }}
               >
                 Re-derive Regions
+              </Button>
+
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={handleRebuildBundles}
+                disabled={bundlesRebuilding}
+                sx={{ mr: 1 }}
+                title="Rebuild the app's region download file (uses the Region filter, or all regions if none is selected)"
+              >
+                {bundlesRebuilding ? "Rebuilding…" : "Rebuild Download Bundles"}
               </Button>
               
               <Button

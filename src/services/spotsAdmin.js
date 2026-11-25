@@ -105,3 +105,10 @@ export async function analyzeR2Storage() {
 export async function quickStorageStats() {
   return callFunction('quickStorageStats', {}, 120000); // matches server timeoutSeconds: 120
 }
+
+// Rebuilds the prebuilt spot download bundle for one region, or every region
+// when region is omitted (functions/src/spotBundles.ts). The app downloads
+// these instead of reading each spot from Firestore.
+export async function rebuildSpotBundles(region) {
+  return callFunction('rebuildSpotBundles', region ? { region } : {}, 3600000); // server timeoutSeconds: 3600
+}

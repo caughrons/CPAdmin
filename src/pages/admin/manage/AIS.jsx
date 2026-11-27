@@ -21,6 +21,11 @@ import { Play, Square } from "lucide-react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { fetchRegionAisStats } from "@/services/aisStats";
+import {
+  aisPhase,
+  getAisServerStatus,
+  setAisFeed,
+} from "@/services/aisServerAdmin";
 import { AIS_REGION_BOXES } from "@/config";
 import firebase from "firebase/compat/app";
 import "firebase/compat/database";
@@ -34,6 +39,32 @@ mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 const POLL_MS = 20000; // re-poll /vessels while a region is selected
 const HEARTBEAT_MS = 45000; // re-write the admin viewport (keeps coverage alive)
 const ACTIVATION_GRACE_MS = 60000; // "activating" window before "no vessels" is real
+const STATUS_FAST_MS = 5000; // server status poll while starting/stopping/populating
+const STATUS_SLOW_MS = 30000; // server status poll while off or live
+
+// Server phase → chip shown next to the Start/Stop button.
+const PHASE_CHIP = {
+  off: { label: "Server off", color: "default", spin: false },
+  running_while_off: {
+    label: "Server running with feed off (billing)",
+    color: "warning",
+    spin: false,
+  },
+  stopping: { label: "Shutting down server…", color: "default", spin: true },
+  server_off_while_on: {
+    label: "Feed is on but the server is off",
+    color: "warning",
+    spin: false,
+  },
+  starting: { label: "Starting server…", color: "info", spin: true },
+  connecting: {
+    label: "Server up, connecting to AIS stream…",
+    color: "info",
+    spin: true,
+  },
+  populating: { label: "Populating AIS data…", color: "primary", spin: true },
+  live: { label: "Live", color: "success", spin: false },
+};
 
 const SRC_BOXES = "coverage-boxes";
 const SRC_VESSELS = "vessels";
@@ -336,21 +367,80 @@ function AIS() {
     };
   }, []);
 
+  // ── Server status polling (fast while changing, slow when settled) ──
+  const [serverStatus, setServerStatus] = useState(null);
+  const [statusError, setStatusError] = useState(null);
+  const vesselHistoryRef = useRef([]);
+  const statusTimerRef = useRef(null);
+
+  const pollStatus = useCallback(async () => {
+    if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+    let next = null;
+    try {
+      next = await getAisServerStatus();
+      const v = next?.health?.connected ? next.health.vessels : null;
+      vesselHistoryRef.current =
+        v == null ? [] : [...vesselHistoryRef.current, v].slice(-6);
+      setServerStatus(next);
+      setStatusError(null);
+    } catch (e) {
+      console.error("[AIS server status]", e);
+      setStatusError(e.message || "Could not read server status");
+    }
+    const p = aisPhase(next, vesselHistoryRef.current);
+    const slow =
+      !next ||
+      p === "off" ||
+      p === "live" ||
+      p === "running_while_off" ||
+      p === "server_off_while_on";
+    statusTimerRef.current = setTimeout(
+      pollStatus,
+      slow ? STATUS_SLOW_MS : STATUS_FAST_MS
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!isInitialized || !isAuthenticated) return undefined;
+    pollStatus();
+    return () => {
+      if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+    };
+  }, [isInitialized, isAuthenticated, pollStatus]);
+
+  const phase = aisPhase(serverStatus, vesselHistoryRef.current);
+  const serverBusy = phase === "starting" || phase === "stopping";
+  // The region picker needs a running server to have anything to show.
+  const serverUp =
+    phase === "connecting" || phase === "populating" || phase === "live";
+  const serverUpRef = useRef(false);
+  serverUpRef.current = serverUp;
+
   const toggleFeed = async () => {
     if (feedToggling || feedEnabled === null) return;
     if (!isAuthenticated) {
       alert("You must be signed in to control the AIS feed.");
       return;
     }
-    const newValue = !feedEnabled;
+    // "Running with feed off" → the button shuts the server down.
+    const newValue =
+      phase === "running_while_off"
+        ? false
+        : phase === "server_off_while_on"
+        ? true
+        : !feedEnabled;
     setFeedToggling(true);
+    vesselHistoryRef.current = [];
     try {
-      await rtdb.ref("ais_config/enabled").set(newValue);
+      await setAisFeed(newValue);
     } catch (e) {
       console.error("[AIS feed toggle]", e);
-      alert(`Failed to ${newValue ? "start" : "stop"} the AIS feed.`);
+      alert(
+        e.message || `Failed to ${newValue ? "start" : "stop"} the AIS feed.`
+      );
     } finally {
       setFeedToggling(false);
+      pollStatus();
     }
   };
 
@@ -401,8 +491,10 @@ function AIS() {
           ? AIS_REGION_BOXES.find((b) => b.id === boxOrId) || null
           : boxOrId;
 
-      // Ignore map clicks while the feed is off (the picker is already disabled).
-      if (box && feedEnabledRef.current === false) return;
+      // Ignore map clicks while the feed or server is off (the picker is
+      // already disabled).
+      if (box && (feedEnabledRef.current === false || !serverUpRef.current))
+        return;
 
       stopRegion();
       setSelectedBox(box);
@@ -423,6 +515,11 @@ function AIS() {
   );
 
   useEffect(() => stopRegion, [stopRegion]);
+
+  // Server went down (feed stopped): drop the monitored region.
+  useEffect(() => {
+    if (!serverUp && selectedBox) selectRegion(null);
+  }, [serverUp, selectedBox, selectRegion]);
 
   const inGrace =
     selectedBox &&
@@ -458,26 +555,37 @@ function AIS() {
             title={
               !isAuthenticated
                 ? "Sign in required"
+                : phase === "running_while_off"
+                ? "The feed is off but its server is still running. Shut it down to stop billing."
+                : phase === "server_off_while_on"
+                ? "The feed is on but its server is powered down. Start it to resume the feed."
                 : feedEnabled
-                ? "Stop AIS feed ingestion"
-                : "Start AIS feed ingestion"
+                ? "Stop the AIS feed and shut down its server"
+                : "Start the AIS server and feed (about 1–2 minutes)"
             }
           >
             <span>
               <Button
                 variant="contained"
                 size="small"
-                color={feedEnabled ? "error" : "success"}
+                color={
+                  (feedEnabled && phase !== "server_off_while_on") ||
+                  phase === "running_while_off"
+                    ? "error"
+                    : "success"
+                }
                 disabled={
                   !isInitialized ||
                   !isAuthenticated ||
                   feedEnabled === null ||
-                  feedToggling
+                  feedToggling ||
+                  serverBusy
                 }
                 startIcon={
                   feedToggling ? (
                     <CircularProgress size={14} color="inherit" />
-                  ) : feedEnabled ? (
+                  ) : (feedEnabled && phase !== "server_off_while_on") ||
+                    phase === "running_while_off" ? (
                     <Square size={14} />
                   ) : (
                     <Play size={14} />
@@ -488,12 +596,47 @@ function AIS() {
               >
                 {feedEnabled === null
                   ? "…"
+                  : phase === "running_while_off"
+                  ? "Shut Down Server"
+                  : phase === "server_off_while_on"
+                  ? "Start Server"
                   : feedEnabled
                   ? "Stop Feed"
                   : "Start Feed"}
               </Button>
             </span>
           </Tooltip>
+
+          {phase && (
+            <Chip
+              size="small"
+              variant={phase === "live" ? "filled" : "outlined"}
+              color={PHASE_CHIP[phase].color}
+              icon={
+                PHASE_CHIP[phase].spin ? (
+                  <CircularProgress size={12} color="inherit" />
+                ) : undefined
+              }
+              label={
+                (phase === "populating" || phase === "live") &&
+                serverStatus?.health
+                  ? `${
+                      PHASE_CHIP[phase].label
+                    } · ${serverStatus.health.vessels.toLocaleString()} vessels`
+                  : PHASE_CHIP[phase].label
+              }
+            />
+          )}
+          {statusError && (
+            <Tooltip title={statusError}>
+              <Chip
+                size="small"
+                color="error"
+                variant="outlined"
+                label="Status unavailable"
+              />
+            </Tooltip>
+          )}
 
           <Autocomplete
             size="small"
@@ -503,7 +646,7 @@ function AIS() {
             isOptionEqualToValue={(o, v) => o.id === v.id}
             value={selectedBox}
             onChange={(_, v) => selectRegion(v)}
-            disabled={feedEnabled === false}
+            disabled={!serverUp}
             sx={{ width: 300 }}
             renderInput={(params) => (
               <TextField

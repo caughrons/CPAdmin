@@ -228,3 +228,26 @@ export async function releaseAllPendingCruisnewsStories() {
   const result = await callable();
   return result.data;
 }
+
+// ── Live run status ─────────────────────────────────────────────────────────
+// Written by the generator (functions/src/cruisnews/runStatus.ts) as a run
+// progresses. Must match STALE_AFTER_MS there.
+export const RUN_STALE_AFTER_MS = 35 * 60 * 1000;
+
+/** Subscribe to the current/last CruisNews run. Returns an unsubscribe fn. */
+export function subscribeCruisnewsRunStatus(onChange, onError) {
+  return firestore
+    .collection("cruisnews_config")
+    .doc("run_status")
+    .onSnapshot(
+      (snap) => onChange(snap.exists ? snap.data() : null),
+      (e) => onError?.(e)
+    );
+}
+
+/** True while a run is in progress and still reporting. */
+export function isRunActive(status, now = Date.now()) {
+  if (!status || status.state !== "running") return false;
+  const updated = status.updatedAt?.toMillis?.() ?? null;
+  return updated !== null && now - updated < RUN_STALE_AFTER_MS;
+}

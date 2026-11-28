@@ -32,7 +32,10 @@ import {
   runCruisnewsPrompt,
   saveCruisnewsPrompt,
   releaseAllPendingCruisnewsStories,
+  subscribeCruisnewsRunStatus,
+  isRunActive,
 } from "@/services/cruisnewsAdmin";
+import CruisnewsRunPanel from "./CruisnewsRunPanel";
 import { AuthContext } from "@/contexts/FirebaseAuthContext";
 import firebase from "firebase/compat/app";
 import "firebase/compat/database";
@@ -136,6 +139,9 @@ function News() {
     useState("claude-sonnet-5");
   const [previousProviderModel, setPreviousProviderModel] = useState(null);
   const [runLoading, setRunLoading] = useState(false);
+  // Live status of the current/last generation run (survives a page refresh).
+  const [runStatus, setRunStatus] = useState(null);
+  const [statusTick, setStatusTick] = useState(0);
   const [runError, setRunError] = useState(null);
   const [runSuccess, setRunSuccess] = useState(null);
   const [runMetrics, setRunMetrics] = useState({
@@ -447,6 +453,32 @@ function News() {
     savedProviderModel,
   ]);
 
+  useEffect(() => {
+    const unsubscribe = subscribeCruisnewsRunStatus(setRunStatus, (e) =>
+      console.error("[CruisNews run status]", e)
+    );
+    // Re-check staleness once a minute even if the doc stops changing.
+    const t = setInterval(() => setStatusTick((n) => n + 1), 60000);
+    return () => {
+      unsubscribe();
+      clearInterval(t);
+    };
+  }, []);
+
+  const runActive = useMemo(
+    () => isRunActive(runStatus),
+    // statusTick forces a re-check as time passes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [runStatus, statusTick]
+  );
+
+  // Reload the stories list when a run finishes (from this tab or any other).
+  const runOutcomeKey = `${runStatus?.runId ?? ""}:${runStatus?.state ?? ""}`;
+  useEffect(() => {
+    if (runStatus?.state === "done") loadStories();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runOutcomeKey]);
+
   const handleRunPrompt = useCallback(async () => {
     setRunLoading(true);
     setRunError(null);
@@ -467,7 +499,11 @@ function News() {
       setRunMetrics({ storyCount, imageCount, message: null });
       await loadStories();
     } catch (e) {
-      const errorMessage = e?.message ?? String(e);
+      const errorMessage =
+        e?.code === "functions/failed-precondition" ||
+        e?.code === "failed-precondition"
+          ? "A run is already in progress. Its progress is shown above."
+          : e?.message ?? String(e);
       setRunError(errorMessage);
       setRunMetrics({ storyCount: 0, imageCount: 0, message: null });
     } finally {
@@ -1020,13 +1056,15 @@ function News() {
               variant="contained"
               color="secondary"
               onClick={handleRunPrompt}
-              disabled={runLoading}
+              disabled={runLoading || runActive}
             >
-              {runLoading ? "Running..." : "Run Prompt"}
+              {runLoading || runActive ? "Running..." : "Run Prompt"}
             </Button>
           </Box>
         </Box>
       </Paper>
+
+      <CruisnewsRunPanel status={runStatus} />
 
       {tab === 0 && (
         <Paper>
